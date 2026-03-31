@@ -205,6 +205,11 @@ impl Memory {
     }
 }
 
+fn stopped_flag_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".wispy-ai").join(".stopped")
+}
+
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
@@ -246,21 +251,25 @@ async fn main() {
 
     match args.get(1).map(|s| s.as_str()) {
         Some("--daemon") => {
+            // Stergem flagul de oprit la pornire
+            let _ = fs::remove_file(stopped_flag_path());
             run_daemon().await;
         }
         Some("--stop") => {
-            // Gasim si oprim llama-server pe portul 11435
+            // Cream flagul de oprit — binaryul nu mai returneaza sugestii
+            let flag = stopped_flag_path();
+            let _ = fs::write(&flag, "");
+
+            // Oprim si llama-server
             let out = Command::new("lsof")
                 .args(["-ti", ":11435"])
                 .output()
                 .unwrap_or_else(|_| process::exit(0));
             let pid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if pid.is_empty() {
-                println!("Not running.");
-            } else {
+            if !pid.is_empty() {
                 Command::new("kill").arg(&pid).status().ok();
-                println!("Stopped.");
             }
+            println!("Wispy stopped.");
         }
         Some("--status") => {
             let running = std::net::TcpStream::connect_timeout(
@@ -421,6 +430,11 @@ fn start_ai_server() {
 // ---------------------------------------------------------------------------
 
 async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
+    // Daca wispy e oprit, nu returnam nimic
+    if stopped_flag_path().exists() {
+        return;
+    }
+
     let memory = Memory::load();
 
     // Match exact cu incredere mare → raspuns instant, fara AI
