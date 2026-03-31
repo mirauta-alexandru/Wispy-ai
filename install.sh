@@ -9,7 +9,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-REPO="https://github.com/mirauta-alexandru/Wispy-ai"
+REPO="https://github.com/mirauta-alexandru/Wispy-ai-terminal-autocomplete"
 INSTALL_DIR="$HOME/.wispy-ai"
 BIN_DIR="$INSTALL_DIR/bin"
 SRC_DIR="$INSTALL_DIR/src"
