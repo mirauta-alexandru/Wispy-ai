@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{self, Command};
 use std::os::unix::fs::PermissionsExt;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf";
 const MODEL_NAME: &str = "qwen2.5-coder-0.5b.gguf";
@@ -210,6 +210,31 @@ fn stopped_flag_path() -> PathBuf {
     PathBuf::from(home).join(".wispy-ai").join(".stopped")
 }
 
+fn last_used_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".wispy-ai").join(".last_used")
+}
+
+fn watchdog_pid_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".wispy-ai").join(".watchdog.pid")
+}
+
+fn watchdog_already_running() -> bool {
+    let pid_path = watchdog_pid_path();
+    if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+        let pid = pid_str.trim().to_string();
+        // Verificam daca procesul cu acel PID exista inca
+        Command::new("kill")
+            .args(["-0", &pid])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
@@ -251,9 +276,11 @@ async fn main() {
 
     match args.get(1).map(|s| s.as_str()) {
         Some("--daemon") => {
-            // Stergem flagul de oprit la pornire
             let _ = fs::remove_file(stopped_flag_path());
             run_daemon().await;
+        }
+        Some("--watchdog") => {
+            run_watchdog().await;
         }
         Some("--stop") => {
             // Cream flagul de oprit — binaryul nu mai returneaza sugestii
@@ -325,6 +352,18 @@ async fn run_daemon() {
     }
 
     start_ai_server();
+
+    // Pornim watchdog-ul daca nu e deja unul activ
+    if !watchdog_already_running() {
+        if let Ok(current_exe) = env::current_exe() {
+            Command::new(&current_exe)
+                .arg("--watchdog")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok();
+        }
+    }
 }
 
 async fn download_file(
@@ -429,11 +468,57 @@ fn start_ai_server() {
 // Completare cu memorie + context
 // ---------------------------------------------------------------------------
 
+async fn run_watchdog() {
+    const INACTIVITY_LIMIT: u64 = 15 * 60; // 15 minute
+    const CHECK_INTERVAL:   u64 = 60;       // verifica la fiecare minut
+
+    // Salvam PID-ul nostru
+    let pid = std::process::id();
+    let _ = fs::write(watchdog_pid_path(), pid.to_string());
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(CHECK_INTERVAL)).await;
+
+        // Daca serverul nu mai e pornit, iesim
+        if std::net::TcpStream::connect_timeout(
+            &"127.0.0.1:11435".parse().unwrap(),
+            Duration::from_millis(200),
+        ).is_err() {
+            break;
+        }
+
+        // Calculam inactivitatea din fisierul last_used
+        let inactive_secs = fs::metadata(last_used_path())
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().unwrap_or_default().as_secs())
+            .unwrap_or(INACTIVITY_LIMIT + 1);
+
+        if inactive_secs > INACTIVITY_LIMIT {
+            // Oprim serverul (fara flagul .stopped — se va reporni automat)
+            let out = Command::new("lsof")
+                .args(["-ti", ":11435"])
+                .output();
+            if let Ok(out) = out {
+                let pid_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !pid_str.is_empty() {
+                    Command::new("kill").arg(&pid_str).status().ok();
+                }
+            }
+            break;
+        }
+    }
+
+    let _ = fs::remove_file(watchdog_pid_path());
+}
+
 async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
-    // Daca wispy e oprit, nu returnam nimic
+    // Daca wispy e oprit manual, nu returnam nimic
     if stopped_flag_path().exists() {
         return;
     }
+
+    // Actualizam timestamp-ul de activitate
+    let _ = fs::write(last_used_path(), "");
 
     let memory = Memory::load();
 
