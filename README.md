@@ -15,7 +15,7 @@ No cloud. No API key. Runs entirely on your machine.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mirautaalexandru/wispy-ai/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mirauta-alexandru/Wispy-ai/main/install.sh | bash
 ```
 
 Then reload your shell:
