@@ -39,8 +39,22 @@ function wispy() {
                 echo "Wispy is stopped  (run: wispy start)"
             fi
             ;;
+        update)
+            echo "Updating wispy-ai..."
+            local src="$HOME/.wispy-ai/src"
+            local bin="$HOME/.wispy-ai/bin/wispy"
+            if [[ ! -d "$src/.git" ]]; then
+                echo "Source not found. Please reinstall."
+                return 1
+            fi
+            git -C "$src" pull --quiet && \
+            cargo build --release --quiet --manifest-path "$src/ai-native/core/Cargo.toml" && \
+            cp "$src/ai-native/core/target/release/ai-native" "$bin" && \
+            cp "$src/wispy.zsh" "$HOME/.wispy-ai/wispy.zsh" && \
+            echo "Updated! Run: source ~/.zshrc"
+            ;;
         *)
-            echo "Usage: wispy [start|stop|status]"
+            echo "Usage: wispy [start|stop|status|update]"
             ;;
     esac
 }
