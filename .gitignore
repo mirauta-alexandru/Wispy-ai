@@ -1,0 +1,10 @@
+# Rust build artifacts
+ai-native/core/target/
+ai-native/core/Cargo.lock
+
+# macOS
+.DS_Store
+
+# Models and downloaded binaries (too large for git)
+*.gguf
+*.zip
