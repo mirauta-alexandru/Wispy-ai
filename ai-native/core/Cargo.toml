@@ -1,0 +1,11 @@
+[package]
+name = "ai-native"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.32", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "stream", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+futures-util = "0.3"
