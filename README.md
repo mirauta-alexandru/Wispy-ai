@@ -2,11 +2,7 @@
 
 > Fast, offline AI-powered autocomplete for your terminal — that learns how you type.
 
-```
-$ git sta[tus]              ← suggestion appears as you type
-$ gti sta → git status      ← typos are detected and corrected
-$ gi[t status]              ← remembers your patterns, responds instantly
-```
+![demo](demo.gif)
 
 No cloud. No API key. Runs entirely on your machine.
 
