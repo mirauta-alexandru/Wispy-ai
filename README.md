@@ -1,7 +1,6 @@
 # wispy-ai
 <img width="3361" height="1191" alt="Wispy-ai" src="https://github.com/user-attachments/assets/73101dc4-175b-46da-9d54-c1b992be282e" />
 
-
 > Fast, offline AI-powered autocomplete for your terminal — that learns how you type.
 
 ![demo](https://vhs.charm.sh/vhs-1exf3bQFikFWpmVSJKcuKd.gif)
@@ -16,36 +15,39 @@ No cloud. No API key. Runs entirely on your machine.
 curl -fsSL https://raw.githubusercontent.com/mirauta-alexandru/Wispy-ai/main/install.sh | bash
 ```
 
-Then reload your shell:
+The installer automatically detects your OS, architecture and shell.
 
-```bash
-source ~/.zshrc
-```
-
-> **Requirements:** macOS Apple Silicon · zsh · ~600 MB disk space
+> **Requirements:** macOS Apple Silicon or Linux (x86_64 / arm64) · zsh, bash or fish · ~600 MB disk space
 
 ---
 
 ## How it works
 
-1. **You type** — a gray suggestion appears after your cursor
+1. **You type** — a suggestion appears as you type
 2. **Press `Tab`** to accept, or keep typing to ignore
 3. **It learns** — every accepted command is saved and returned instantly next time
 4. **It corrects** — typos like `gti sta` are recognized and show `→ git status`
 
-The AI model ([Qwen2.5-Coder-0.5B](https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF)) runs locally via [llama.cpp](https://github.com/ggerganov/llama.cpp). First run downloads ~600 MB. After that, everything is offline.
+The AI model ([Qwen2.5-Coder-0.5B](https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF)) runs locally via [llama.cpp](https://github.com/ggml-org/llama.cpp). First run downloads ~600 MB. After that, everything is offline.
+
+---
+
+## Shell support
+
+| Shell | Experience |
+|-------|------------|
+| **zsh** | Inline ghost text after cursor, updates on every keystroke |
+| **fish** | Ghost text in right prompt, updates on every keystroke |
+| **bash** | `Tab` triggers suggestion, `Ctrl+N` as alternative |
 
 ---
 
 ## Usage
 
-Just type — suggestions appear automatically in gray.
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Accept suggestion |
-| `Ctrl+N` | Accept suggestion |
-| Any other key | Dismiss and keep typing |
+| Key | zsh / fish | bash |
+|-----|-----------|------|
+| `Tab` | Accept suggestion | Suggest or complete |
+| `Ctrl+N` | Accept suggestion | Accept suggestion |
 
 ### Commands
 
@@ -53,6 +55,24 @@ Just type — suggestions appear automatically in gray.
 wispy start    # Start the AI model
 wispy stop     # Stop the AI model
 wispy status   # Check if running
+wispy update   # Update to latest version
+```
+
+### Model management
+
+```bash
+wispy model list              # List available GGUF models
+wispy model set <name.gguf>   # Switch active model
+wispy model current           # Show active model
+```
+
+### Memory
+
+```bash
+wispy memory                      # Show stats and top commands
+wispy memory forget <command>     # Remove a specific command
+wispy memory clear                # Clear all memory
+wispy import-history              # Import commands from ~/.zsh_history
 ```
 
 ---
@@ -83,10 +103,34 @@ You type: "git s"
 
 ---
 
-## Uninstall
+## Using a fine-tuned model
+
+After training your own model and converting it to GGUF:
 
 ```bash
-sed -i '' '/wispy/d' ~/.zshrc
+# Place the GGUF file in the models directory
+cp your-model.gguf ~/.wispy-ai/models/
+
+# Switch to it
+wispy model set your-model.gguf
+
+# Restart wispy
+wispy stop && wispy start
+```
+
+---
+
+## Uninstall
+
+**zsh / bash:**
+```bash
+sed -i '' '/wispy/d' ~/.zshrc   # or ~/.bashrc
+rm -rf ~/.wispy-ai
+```
+
+**fish:**
+```bash
+rm ~/.config/fish/conf.d/wispy.fish
 rm -rf ~/.wispy-ai
 ```
 
@@ -99,8 +143,8 @@ rm -rf ~/.wispy-ai
 | AI model | Qwen2.5-Coder-0.5B-Instruct (Q4_K_M, ~300 MB) |
 | Engine | llama.cpp (llama-server, local HTTP API on port 11435) |
 | Memory | JSON file at `~/.wispy-ai/memory.json` |
-| Language | Rust (wispy binary) + Zsh (plugin) |
-| Platform | macOS Apple Silicon |
+| Language | Rust (wispy binary) + zsh / bash / fish plugins |
+| Platform | macOS Apple Silicon · Linux x86_64 · Linux arm64 |
 | Network | None after initial download |
 
 ---
