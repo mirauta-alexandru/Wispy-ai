@@ -12,8 +12,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf";
 const MODEL_NAME: &str = "qwen2.5-coder-0.5b.gguf";
-const LLAMA_SERVER_URL: &str = "https://github.com/ggerganov/llama.cpp/releases/download/b4900/llama-b4900-bin-macos-arm64.zip";
 const SERVER_ZIP_NAME: &str = "llama-server.zip";
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const LLAMA_SERVER_URL: &str = "https://github.com/ggerganov/llama.cpp/releases/download/b4900/llama-b4900-bin-macos-arm64.zip";
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const LLAMA_SERVER_URL: &str = "https://github.com/ggerganov/llama.cpp/releases/download/b4900/llama-b4900-bin-ubuntu-x64.zip";
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const LLAMA_SERVER_URL: &str = "https://github.com/ggerganov/llama.cpp/releases/download/b4900/llama-b4900-bin-ubuntu-arm64.zip";
 
 // ---------------------------------------------------------------------------
 // Sistemul de memorie
@@ -466,6 +474,19 @@ async fn main() {
                 }
             } else {
                 eprintln!("Folosire: wispy memory forget <comanda>");
+            }
+        }
+        // ── Fast: memory-only, fara AI (pentru fish right-prompt) ─────────
+        Some("--fast") => {
+            if stopped_flag_path().exists() { return; }
+            let input = match args.get(2) { Some(s) => s.as_str(), None => return };
+            let cwd   = args.get(3).map(|s| s.as_str()).unwrap_or("");
+            let memory = Memory::load();
+            if let Some(entry) = memory.get_exact(input) {
+                if entry.count >= 3 { print!("{}", entry.completion); return; }
+            }
+            if let Some(exp) = memory.get_prefix_expansion(input, cwd) {
+                print!("{}", exp);
             }
         }
         // ── Import history ─────────────────────────────────────────────────
