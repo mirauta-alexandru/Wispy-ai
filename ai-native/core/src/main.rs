@@ -23,10 +23,6 @@ const LLAMA_SERVER_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/d
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const LLAMA_SERVER_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b4900/llama-b4900-bin-ubuntu-arm64.zip";
 
-// ---------------------------------------------------------------------------
-// Sistemul de memorie
-// ---------------------------------------------------------------------------
-
 #[derive(Serialize, Deserialize, Clone)]
 struct MemoryEntry {
     completion: String,
@@ -67,7 +63,7 @@ impl Memory {
     }
 
     fn learn(&mut self, input: &str, completion: &str, cwd: &str) {
-        // Nu salvam daca inputul e un typo al unei comenzi existente cu count mai mare
+        // don't save if input looks like a typo of something we already know
         let input_first = input.split_whitespace().next().unwrap_or("");
         let is_typo = self.entries.iter().any(|(k, v)| {
             if k == input { return false; }
@@ -91,7 +87,6 @@ impl Memory {
         entry.cwd = cwd.to_string();
     }
 
-    // Sterge intrarile care sunt typo-uri ale unor comenzi cu count mai mare
     fn cleanup_typos(&mut self) -> usize {
         let keys: Vec<String> = self.entries.keys().cloned().collect();
         let mut to_remove = Vec::new();
@@ -122,10 +117,6 @@ impl Memory {
         self.entries.get(input)
     }
 
-    // Fuzzy match pentru typo-uri.
-    // Returneaza (ghost_text, full_corrected_command) sau None.
-    // Ex: buffer="gti sta", key="git sta", completion="tus"
-    //     → ghost="tus", correction="git status"
     fn get_fuzzy_match(&self, input: &str, cwd: &str) -> Option<(String, String)> {
         if input.len() < 3 { return None; }
         let now = now_secs();
@@ -139,12 +130,10 @@ impl Memory {
                 let key_words: Vec<&str> = k.split_whitespace().collect();
                 let key_first = key_words.first().copied().unwrap_or("");
 
-                // Distanta Levenshtein pe primul cuvant
                 let dist = levenshtein(typed_first, key_first);
                 let threshold = if typed_first.len() <= 3 { 1 } else { 2 };
                 if dist == 0 || dist > threshold { return None; }
 
-                // Restul cuvintelor trebuie sa se potriveasca (prefix)
                 if typed_words.len() > 1 {
                     let typed_rest = typed_words[1..].join(" ");
                     let key_rest   = key_words[1..].join(" ");
@@ -167,9 +156,8 @@ impl Memory {
         })
     }
 
-    // Cauta cea mai buna intrare din memorie care incepe cu ce a tastat userul.
-    // Returneaza (sufixul_cheii + completarea) ca un string gata de afisat.
-    // Ex: buffer="gi", cheie="git sta", completion="tus" → "t status"
+    // find best memory entry that starts with what the user typed
+    // e.g. buffer="gi", key="git sta", completion="tus" → returns "t status"
     fn get_prefix_expansion(&self, input: &str, cwd: &str) -> Option<String> {
         if input.is_empty() {
             return None;
@@ -189,7 +177,6 @@ impl Memory {
         best.map(|(_, k, v)| format!("{}{}", &k[input.len()..], v.completion))
     }
 
-    // Cele mai relevante intrari cu acelasi prim cuvant, sortate dupa scor
     fn get_related(&self, input: &str, cwd: &str, limit: usize) -> Vec<(&String, &MemoryEntry)> {
         let first_word = input.split_whitespace().next().unwrap_or("");
         let now = now_secs();
@@ -261,7 +248,7 @@ fn list_models() {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.ends_with(".gguf") {
-                    let marker = if name == active { " <- activ" } else { "" };
+                    let marker = if name == active { " <- active" } else { "" };
                     println!("  {}{}", name, marker);
                     found = true;
                 }
@@ -270,8 +257,8 @@ fn list_models() {
     }
 
     if !found {
-        println!("Niciun model .gguf gasit.");
-        println!("Pune modelul GGUF in ~/.wispy-ai/models/ si ruleaza: wispy model set <nume.gguf>");
+        println!("No .gguf models found.");
+        println!("Place a GGUF file in ~/.wispy-ai/models/ then run: wispy model set <name.gguf>");
     }
 }
 
@@ -281,14 +268,14 @@ fn import_history(memory: &mut Memory) -> usize {
 
     let content = match fs::read_to_string(&hist_path) {
         Ok(c) => c,
-        Err(_) => { eprintln!("Nu am gasit ~/.zsh_history"); return 0; }
+        Err(_) => { eprintln!("~/.zsh_history not found"); return 0; }
     };
 
     let mut count = 0;
     for line in content.lines() {
-        // Suporta ambele formate:
-        // simplu:    "git status"
-        // timestamp: ": 1620000000:0;git status"
+        // zsh history has two formats:
+        // plain:     "git status"
+        // extended:  ": 1620000000:0;git status"
         let cmd = if line.starts_with(": ") && line.contains(';') {
             line.splitn(2, ';').nth(1).unwrap_or("").trim()
         } else {
@@ -302,8 +289,8 @@ fn import_history(memory: &mut Memory) -> usize {
         let words: Vec<&str> = cmd.split_whitespace().collect();
         if words.is_empty() { continue; }
 
-        // Invatam mai multe prefixuri din aceeasi comanda:
-        // "git status --short" → ("git", " status --short") si ("git status", " --short")
+        // learn multiple prefixes from each command
+        // "git status --short" → ("git", " status --short") and ("git status", " --short")
         for i in 1..words.len() {
             let input      = words[..i].join(" ");
             let completion = format!(" {}", words[i..].join(" "));
@@ -319,7 +306,6 @@ fn watchdog_already_running() -> bool {
     let pid_path = watchdog_pid_path();
     if let Ok(pid_str) = fs::read_to_string(&pid_path) {
         let pid = pid_str.trim().to_string();
-        // Verificam daca procesul cu acel PID exista inca
         Command::new("kill")
             .args(["-0", &pid])
             .output()
@@ -334,7 +320,7 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-// Damerau-Levenshtein: conteaza si transpunerile (gti→git = 1, nu 2)
+// Damerau-Levenshtein — counts transpositions so "gti" → "git" is distance 1
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -352,7 +338,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
             dp[i][j] = (dp[i-1][j] + 1)
                 .min(dp[i][j-1] + 1)
                 .min(dp[i-1][j-1] + cost);
-            // Transpunere: ab → ba
             if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
                 dp[i][j] = dp[i][j].min(dp[i-2][j-2] + 1);
             }
@@ -360,10 +345,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
     dp[m][n]
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 #[tokio::main]
 async fn main() {
@@ -378,11 +359,10 @@ async fn main() {
             run_watchdog().await;
         }
         Some("--stop") => {
-            // Cream flagul de oprit — binaryul nu mai returneaza sugestii
             let flag = stopped_flag_path();
             let _ = fs::write(&flag, "");
 
-            // Oprim llama-server — lsof poate returna mai multe PID-uri
+            // lsof may return multiple PIDs, kill each one
             if let Ok(out) = Command::new("lsof").args(["-ti", ":11435"]).output() {
                 let pids = String::from_utf8_lossy(&out.stdout);
                 for pid in pids.split_whitespace() {
@@ -403,11 +383,10 @@ async fn main() {
             let removed = memory.cleanup_typos();
             memory.save();
             if removed > 0 {
-                eprintln!("Curatate {} intrari typo din memorie.", removed);
+                eprintln!("Removed {} typo entries from memory.", removed);
             }
         }
         Some("--learn") => {
-            // --learn <input> <completion> <cwd>
             if args.len() >= 4 {
                 let mut memory = Memory::load();
                 memory.learn(
@@ -418,9 +397,8 @@ async fn main() {
                 memory.save();
             }
         }
-        // ── Model management ───────────────────────────────────────────────
         Some("--model-list") => {
-            println!("Modele disponibile:");
+            println!("Available models:");
             list_models();
         }
         Some("--model-current") => {
@@ -428,32 +406,30 @@ async fn main() {
         }
         Some("--model-set") => {
             if let Some(name) = args.get(2) {
-                // Verificam ca modelul exista
                 let found = wispy_models_dir().join(name).exists()
                     || legacy_models_dir().join(name).exists();
                 if !found {
-                    eprintln!("Modelul '{}' nu a fost gasit. Verifica: wispy model list", name);
+                    eprintln!("Model '{}' not found. Run: wispy model list", name);
                     process::exit(1);
                 }
                 let _ = fs::write(model_config_path(), name);
-                println!("Model setat: {}", name);
-                println!("Reporneste wispy: wispy stop && wispy start");
+                println!("Active model: {}", name);
+                println!("Restart wispy: wispy stop && wispy start");
             } else {
-                eprintln!("Folosire: wispy model set <nume.gguf>");
+                eprintln!("Usage: wispy model set <name.gguf>");
             }
         }
-        // ── Memory management ──────────────────────────────────────────────
         Some("--memory-stats") => {
             let memory = Memory::load();
             let total = memory.entries.len();
-            println!("Comenzi in memorie: {}", total);
+            println!("Commands in memory: {}", total);
 
             if total == 0 { return; }
 
             let mut sorted: Vec<_> = memory.entries.iter().collect();
             sorted.sort_by(|a, b| b.1.count.cmp(&a.1.count));
 
-            println!("\nTop 10 cele mai folosite:");
+            println!("\nTop 10 most used:");
             for (i, (key, entry)) in sorted.iter().take(10).enumerate() {
                 println!("  {}. {}{} (x{})", i + 1, key, entry.completion, entry.count);
             }
@@ -461,22 +437,22 @@ async fn main() {
         Some("--memory-clear") => {
             let empty = Memory::new();
             empty.save();
-            println!("Memoria curatata.");
+            println!("Memory cleared.");
         }
         Some("--memory-forget") => {
             if let Some(cmd) = args.get(2) {
                 let mut memory = Memory::load();
                 if memory.entries.remove(cmd.as_str()).is_some() {
                     memory.save();
-                    println!("Sters din memorie: {}", cmd);
+                    println!("Removed from memory: {}", cmd);
                 } else {
-                    println!("Nu am gasit in memorie: {}", cmd);
+                    println!("Not found in memory: {}", cmd);
                 }
             } else {
-                eprintln!("Folosire: wispy memory forget <comanda>");
+                eprintln!("Usage: wispy memory forget <command>");
             }
         }
-        // ── Fast: memory-only, fara AI (pentru fish right-prompt) ─────────
+        // memory-only lookup, no AI — used by fish right-prompt for instant suggestions
         Some("--fast") => {
             if stopped_flag_path().exists() { return; }
             let input = match args.get(2) { Some(s) => s.as_str(), None => return };
@@ -489,12 +465,11 @@ async fn main() {
                 print!("{}", exp);
             }
         }
-        // ── Import history ─────────────────────────────────────────────────
         Some("--import-history") => {
             let mut memory = Memory::load();
             let n = import_history(&mut memory);
             memory.save();
-            println!("Importate {} comenzi din ~/.zsh_history.", n);
+            println!("Imported {} commands from ~/.zsh_history.", n);
         }
         Some(input) if !input.starts_with("--") => {
             let cwd    = args.get(2).map(|s| s.as_str()).unwrap_or("");
@@ -505,26 +480,21 @@ async fn main() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Daemon: descarca modelul + serverul, porneste llama-server
-// ---------------------------------------------------------------------------
-
 async fn run_daemon() {
     let client = Client::new();
 
-    if let Err(e) = download_file(&client, MODEL_URL, MODEL_NAME, "Model AI (0.5B)", "models").await {
-        eprintln!("Eroare model: {}", e);
+    if let Err(e) = download_file(&client, MODEL_URL, MODEL_NAME, "AI model (0.5B)", "models").await {
+        eprintln!("Model download failed: {}", e);
         process::exit(1);
     }
 
     if let Err(e) = download_server(&client).await {
-        eprintln!("Eroare motor AI: {}", e);
+        eprintln!("Engine download failed: {}", e);
         process::exit(1);
     }
 
     start_ai_server();
 
-    // Pornim watchdog-ul daca nu e deja unul activ
     if !watchdog_already_running() {
         if let Ok(current_exe) = env::current_exe() {
             Command::new(&current_exe)
@@ -551,7 +521,7 @@ async fn download_file(
     if path.exists() {
         return Ok(());
     }
-    println!("Descarc {}...", desc);
+    println!("Downloading {}...", desc);
     let res = client.get(url).send().await?;
     let total_size = res.content_length().unwrap_or(0);
     let mut file = File::create(&path)?;
@@ -563,11 +533,11 @@ async fn download_file(
         downloaded += chunk.len() as u64;
         if total_size > 0 {
             let percent = (downloaded as f64 / total_size as f64) * 100.0;
-            print!("\rProgres: {:.1}%", percent);
+            print!("\r{:.1}%", percent);
             std::io::stdout().flush()?;
         }
     }
-    println!("\n{} descarcat!", desc);
+    println!("\n{} done.", desc);
     Ok(())
 }
 
@@ -578,8 +548,8 @@ async fn download_server(client: &Client) -> Result<(), Box<dyn std::error::Erro
     if server_path.exists() {
         return Ok(());
     }
-    download_file(client, LLAMA_SERVER_URL, SERVER_ZIP_NAME, "Motor AI Llama", "bin").await?;
-    println!("Extrag motorul AI...");
+    download_file(client, LLAMA_SERVER_URL, SERVER_ZIP_NAME, "llama.cpp engine", "bin").await?;
+    println!("Extracting engine...");
     let zip_path = dir.join(SERVER_ZIP_NAME);
     let status = Command::new("unzip")
         .args(["-o", zip_path.to_str().unwrap(), "-d", dir.to_str().unwrap()])
@@ -591,7 +561,7 @@ async fn download_server(client: &Client) -> Result<(), Box<dyn std::error::Erro
         let _ = fs::remove_file(zip_path);
         Ok(())
     } else {
-        Err("Eroare la dezarhivarea llama-server".into())
+        Err("Failed to extract llama-server".into())
     }
 }
 
@@ -600,7 +570,6 @@ fn start_ai_server() {
     let base_dir = PathBuf::from(&home).join(".ai-autocomplete");
     let server_path = base_dir.join("bin").join("build").join("bin").join("llama-server");
 
-    // Modelul activ din config, sau default
     let active = active_model_name();
     let candidates = [
         wispy_models_dir().join(&active),
@@ -610,12 +579,11 @@ fn start_ai_server() {
     let model_path = match candidates.iter().find(|p| p.exists()) {
         Some(p) => p.clone(),
         None => {
-            eprintln!("Niciun model gasit! Verifica: wispy model list");
+            eprintln!("No model found. Run: wispy model list");
             return;
         }
     };
 
-    // Daca serverul e deja pornit, iesim
     if reqwest::blocking::Client::new()
         .get("http://127.0.0.1:11435/health")
         .send()
@@ -635,25 +603,19 @@ fn start_ai_server() {
         .stdout(std::process::Stdio::from(log_file.try_clone().unwrap()))
         .stderr(std::process::Stdio::from(log_file))
         .spawn()
-        .expect("Eroare la pornirea motorului AI");
+        .expect("Failed to start llama-server");
 }
 
-// ---------------------------------------------------------------------------
-// Completare cu memorie + context
-// ---------------------------------------------------------------------------
-
 async fn run_watchdog() {
-    const INACTIVITY_LIMIT: u64 = 5 * 60; // 5 minute
-    const CHECK_INTERVAL:   u64 = 30;      // verifica la fiecare 30 secunde
+    const INACTIVITY_LIMIT: u64 = 5 * 60;
+    const CHECK_INTERVAL:   u64 = 30;
 
-    // Salvam PID-ul nostru
     let pid = std::process::id();
     let _ = fs::write(watchdog_pid_path(), pid.to_string());
 
     loop {
         tokio::time::sleep(Duration::from_secs(CHECK_INTERVAL)).await;
 
-        // Daca serverul nu mai e pornit, iesim
         if std::net::TcpStream::connect_timeout(
             &"127.0.0.1:11435".parse().unwrap(),
             Duration::from_millis(200),
@@ -661,17 +623,14 @@ async fn run_watchdog() {
             break;
         }
 
-        // Calculam inactivitatea din fisierul last_used
         let inactive_secs = fs::metadata(last_used_path())
             .and_then(|m| m.modified())
             .map(|t| t.elapsed().unwrap_or_default().as_secs())
             .unwrap_or(INACTIVITY_LIMIT + 1);
 
         if inactive_secs > INACTIVITY_LIMIT {
-            // Oprim serverul (fara flagul .stopped — se va reporni automat)
-            let out = Command::new("lsof")
-                .args(["-ti", ":11435"])
-                .output();
+            // stop without setting the .stopped flag so it auto-restarts on next keystroke
+            let out = Command::new("lsof").args(["-ti", ":11435"]).output();
             if let Ok(out) = out {
                 let pid_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !pid_str.is_empty() {
@@ -686,15 +645,13 @@ async fn run_watchdog() {
 }
 
 async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
-    // Daca wispy e oprit manual, nu returnam nimic
     if stopped_flag_path().exists() {
         return;
     }
 
-    // Actualizam timestamp-ul de activitate
     let _ = fs::write(last_used_path(), "");
 
-    // Daca serverul a fost oprit de watchdog (inactivitate), il reporniram automat
+    // if server was stopped by the watchdog, restart it automatically
     let server_up = std::net::TcpStream::connect_timeout(
         &"127.0.0.1:11435".parse().unwrap(),
         Duration::from_millis(200),
@@ -708,12 +665,12 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
                 .spawn()
                 .ok();
         }
-        return; // server-ul porneste, nu avem sugestie pentru acest keystroke
+        return;
     }
 
     let memory = Memory::load();
 
-    // Match exact cu incredere mare → raspuns instant, fara AI
+    // exact match with high confidence → instant reply, no AI needed
     if let Some(entry) = memory.get_exact(buffer) {
         if entry.count >= 3 {
             print!("{}", entry.completion);
@@ -721,32 +678,20 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
         }
     }
 
-    // Prefix expansion din memorie: "gi" → "t status" (din "git sta → tus")
     if let Some(expansion) = memory.get_prefix_expansion(buffer, cwd) {
         print!("{}", expansion);
         return;
     }
 
-    // Fuzzy match pentru typo-uri: "gti sta" → ghost="tus", correction="git status"
     if let Some((ghost, correction)) = memory.get_fuzzy_match(buffer, cwd) {
-        // Doua linii: ghost text pentru display, comanda corecta pentru accept
+        // two lines: ghost text for display, corrected command for accept
         print!("{}\n{}", ghost, correction);
         return;
     }
 
-    // Construim contextul din memorie
     let exact_hint = memory.get_exact(buffer);
     let related    = memory.get_related(buffer, cwd, 5);
 
-    let mut examples = String::new();
-    if let Some(e) = exact_hint {
-        examples.push_str(&format!("- `{}` -> `{}`\n", buffer, e.completion));
-    }
-    for (input, e) in &related {
-        examples.push_str(&format!("- `{}` -> `{}`\n", input, e.completion));
-    }
-
-    // System prompt cu toleranta la typo-uri
     let mut system = String::from(
         "You are a terminal autocomplete AI. \
          The user may have made minor typos — silently correct and complete. \
@@ -754,8 +699,7 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
          Do not explain. Do not use quotes or markdown. Output at most one line."
     );
 
-    // Adaugam patternurile userului ca exemple
-    if !examples.is_empty() {
+    if !related.is_empty() || exact_hint.is_some() {
         system.push_str("\n\nUser's command patterns (use as hints):");
         for (input, e) in &related {
             system.push_str(&format!("\n  {} -> {}", input, e.completion));
@@ -792,8 +736,6 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
         if let Ok(json) = response.json::<serde_json::Value>().await {
             if let Some(content) = json["choices"][0]["message"]["content"].as_str() {
                 let cleaned = clean_completion(content, buffer);
-                // Modelul poate returna comanda completa sau doar sufixul
-                // Daca incepe cu buffer-ul, extragem sufixul
                 let suffix = if cleaned.starts_with(buffer) {
                     cleaned[buffer.len()..].to_string()
                 } else {
@@ -814,26 +756,22 @@ fn clean_completion(completion: &str, buffer: &str) -> String {
     if c.starts_with('"') && !buffer.ends_with('"') { c = c.trim_matches('"').to_string(); }
     if c.starts_with(' ') && !buffer.ends_with(' ') { c = c.trim_start().to_string(); }
 
-    // AI a repetat toata comanda (match exact)
     if c.starts_with(buffer) {
         return c[buffer.len()..].to_string();
     }
 
-    // Buffer se termina cu spatiu (ex: "docker run "), AI returneaza fara spatiul final
-    // Ex: AI returneaza "docker run --rm" → sufixul util e "--rm"
-    //     AI returneaza "docker run"      → sufixul e "" (nu afisam nimic)
+    // buffer ends with a space — model returned command without trailing space
+    // e.g. buffer="docker run ", model returns "docker run --rm" → we want "--rm"
     let buffer_trimmed = buffer.trim_end();
     if buffer_trimmed != buffer && c.starts_with(buffer_trimmed) {
         return c[buffer_trimmed.len()..].trim_start().to_string();
     }
 
-    // AI a repetat ultimul cuvant
     if let Some(last_word) = buffer.split_whitespace().last() {
         if !buffer.ends_with(' ') {
             if c.starts_with(last_word) {
                 return c[last_word.len()..].to_string();
             }
-            // Suprapunere partiala (ex: user='dock', AI='cker ps')
             for i in (1..=last_word.len()).rev() {
                 let suffix = &last_word[last_word.len() - i..];
                 if c.starts_with(suffix) {

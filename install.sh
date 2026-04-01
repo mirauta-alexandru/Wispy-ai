@@ -21,7 +21,7 @@ echo ""
 
 step() { echo -e "\n${CYAN}=>${NC} ${BOLD}$1${NC}"; }
 
-# ── Detectie OS + arhitectura ────────────────────────────────────────────────
+# ── Detect OS + architecture ─────────────────────────────────────────────────
 
 step "Detecting system"
 
@@ -57,7 +57,7 @@ esac
 
 echo -e "  ${GREEN}✓${NC} OS: $OS  Arch: $ARCH"
 
-# ── Detectie shell ────────────────────────────────────────────────────────────
+# ── Detect shell ──────────────────────────────────────────────────────────────
 
 CURRENT_SHELL=$(basename "$SHELL")
 echo -e "  ${GREEN}✓${NC} Shell: $CURRENT_SHELL"
@@ -162,7 +162,7 @@ case "$CURRENT_SHELL" in
         ;;
 esac
 
-# ── Pornire model AI ─────────────────────────────────────────────────────────
+# ── Start AI model ───────────────────────────────────────────────────────────
 
 step "Starting AI model"
 echo -e "  ${DIM}Downloading Qwen 0.5B + llama.cpp engine (~600 MB, runs in background)${NC}"
@@ -191,5 +191,5 @@ esac
 
 echo ""
 echo -e "  ${DIM}wispy start · wispy stop · wispy status${NC}"
-echo -e "  ${DIM}zsh/fish: sugestie apare automat · bash: Ctrl+N${NC}"
+echo -e "  ${DIM}zsh/fish: suggestion appears automatically · bash: Ctrl+N${NC}"
 echo ""

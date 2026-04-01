@@ -18,8 +18,7 @@ set -g _WISPY_CORRECTION ""
 # Porneste daemon la deschiderea shellului
 "$_WISPY_BIN" --daemon >/dev/null 2>&1 &
 
-# ── Right prompt: ghost text din memorie (instant, fara AI) ──────────────────
-# Se actualizeaza automat la fiecare tasta
+# ── Right prompt: ghost text from memory (instant, no AI) ───────────────────
 
 function fish_right_prompt
     set buf (commandline 2>/dev/null)
@@ -35,7 +34,7 @@ function fish_right_prompt
     end
 end
 
-# ── Tab / Ctrl+N: accepta sugestia (cu AI daca memoria nu stie) ──────────────
+# ── Tab / Ctrl+N: accept suggestion (AI fallback if not in memory) ───────────
 
 function _wispy_accept
     set buf (commandline)
@@ -44,13 +43,13 @@ function _wispy_accept
         return
     end
 
-    # Incercam mai intai --fast (instant din memorie)
+    # Try memory first — instant
     set suggestion ("$_WISPY_BIN" --fast "$buf" "$PWD" 2>/dev/null)
 
-    # Daca nu e in memorie, intrebam AI-ul (cu timeout)
+    # Not in memory — ask the AI
     if test -z "$suggestion"
         set output ("$_WISPY_BIN" "$buf" "$PWD" 2>/dev/null)
-        # Daca e corectie typo (2 linii), luam linia a doua
+        # Typo correction comes back as two lines — take the second one
         if string match -q '*\n*' "$output"
             set suggestion (string split \n "$output")[2]
         else
@@ -115,37 +114,37 @@ function wispy
         case model
             switch $argv[2]
                 case list;    "$_WISPY_BIN" --model-list
-                case current; echo "Model activ: $("$_WISPY_BIN" --model-current)"
+                case current; echo "Active model: $("$_WISPY_BIN" --model-current)"
                 case set
                     if test -z "$argv[3]"
-                        echo "Folosire: wispy model set <nume.gguf>"
+                        echo "Usage: wispy model set <name.gguf>"
                         return 1
                     end
                     "$_WISPY_BIN" --model-set $argv[3]
                 case '*'
-                    echo "Model activ: $("$_WISPY_BIN" --model-current)"
+                    echo "Active model: $("$_WISPY_BIN" --model-current)"
                     echo ""
-                    echo "Comenzi: wispy model list | set <nume> | current"
+                    echo "Commands: wispy model list | set <name> | current"
             end
         case memory
             switch $argv[2]
                 case clear
-                    read --prompt-str "Stergi toata memoria? [y/N] " reply
+                    read --prompt-str "Clear all memory? [y/N] " reply
                     if string match -qi 'y' "$reply"
                         "$_WISPY_BIN" --memory-clear
                     else
-                        echo "Anulat."
+                        echo "Cancelled."
                     end
                 case forget
                     if test -z "$argv[3]"
-                        echo "Folosire: wispy memory forget <comanda>"
+                        echo "Usage: wispy memory forget <command>"
                         return 1
                     end
                     "$_WISPY_BIN" --memory-forget $argv[3]
                 case '*'
                     "$_WISPY_BIN" --memory-stats
                     echo ""
-                    echo "Comenzi: wispy memory forget <cmd> | clear"
+                    echo "Commands: wispy memory forget <cmd> | clear"
             end
         case import-history
             "$_WISPY_BIN" --import-history

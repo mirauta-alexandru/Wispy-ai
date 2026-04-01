@@ -15,8 +15,7 @@ fi
 # Porneste daemon la deschiderea shellului
 "$_WISPY_BIN" --daemon >/dev/null 2>&1 &
 
-# ── Ctrl+N: accepta sugestia wispy ───────────────────────────────────────────
-# Tab ramane pentru completarea normala bash
+# ── Ctrl+N: accept wispy suggestion ─────────────────────────────────────────
 
 _wispy_complete() {
     local buf="${READLINE_LINE}"
@@ -38,14 +37,14 @@ _wispy_complete() {
     fi
     READLINE_POINT=${#READLINE_LINE}
 
-    # Invata comanda acceptata
+    # Learn the accepted command
     "$_WISPY_BIN" --learn "$buf" "$ghost" "$PWD" >/dev/null 2>&1 &
 }
 
 _wispy_tab() {
     local buf="${READLINE_LINE}"
 
-    # Daca linia e goala, Tab normal (completare fisiere/comenzi)
+    # Empty line — fall back to file/command completion
     if [[ -z "$buf" ]]; then
         _wispy_fallback
         return
@@ -55,10 +54,10 @@ _wispy_tab() {
     output=$("$_WISPY_BIN" "$buf" "$PWD" 2>/dev/null)
 
     if [[ -n "$output" ]]; then
-        # Wispy are sugestie — o aplicam
+        # wispy has a suggestion — apply it
         _wispy_complete
     else
-        # Nicio sugestie — fallback la completarea bash normala
+        # no suggestion — fall back to normal bash completion
         _wispy_fallback
     fi
 }
@@ -103,31 +102,31 @@ wispy() {
         model)
             case "$2" in
                 list)    "$_WISPY_BIN" --model-list ;;
-                current) echo "Model activ: $("$_WISPY_BIN" --model-current)" ;;
+                current) echo "Active model: $("$_WISPY_BIN" --model-current)" ;;
                 set)
-                    [[ -z "$3" ]] && { echo "Folosire: wispy model set <nume.gguf>"; return 1; }
+                    [[ -z "$3" ]] && { echo "Usage: wispy model set <name.gguf>"; return 1; }
                     "$_WISPY_BIN" --model-set "$3"
                     ;;
                 *)
-                    echo "Model activ: $("$_WISPY_BIN" --model-current)"
-                    echo "Comenzi: wispy model list | set <nume> | current"
+                    echo "Active model: $("$_WISPY_BIN" --model-current)"
+                    echo "Commands: wispy model list | set <name> | current"
                     ;;
             esac
             ;;
         memory)
             case "$2" in
                 clear)
-                    read -p "Stergi toata memoria? [y/N] " reply
-                    [[ "$reply" =~ ^[Yy]$ ]] && "$_WISPY_BIN" --memory-clear || echo "Anulat."
+                    read -p "Clear all memory? [y/N] " reply
+                    [[ "$reply" =~ ^[Yy]$ ]] && "$_WISPY_BIN" --memory-clear || echo "Cancelled."
                     ;;
                 forget)
-                    [[ -z "$3" ]] && { echo "Folosire: wispy memory forget <comanda>"; return 1; }
+                    [[ -z "$3" ]] && { echo "Usage: wispy memory forget <command>"; return 1; }
                     "$_WISPY_BIN" --memory-forget "$3"
                     ;;
                 *)
                     "$_WISPY_BIN" --memory-stats
                     echo ""
-                    echo "Comenzi: wispy memory forget <cmd> | clear"
+                    echo "Commands: wispy memory forget <cmd> | clear"
                     ;;
             esac
             ;;

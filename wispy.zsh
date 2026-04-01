@@ -59,39 +59,39 @@ function wispy() {
                     "$_WISPY_BIN" --model-list
                     ;;
                 current)
-                    echo "Model activ: $("$_WISPY_BIN" --model-current)"
+                    echo "Active model: $("$_WISPY_BIN" --model-current)"
                     ;;
                 set)
                     if [[ -z "$3" ]]; then
-                        echo "Folosire: wispy model set <nume.gguf>"
+                        echo "Usage: wispy model set <name.gguf>"
                         return 1
                     fi
                     "$_WISPY_BIN" --model-set "$3"
                     ;;
                 *)
-                    echo "Model activ: $("$_WISPY_BIN" --model-current)"
+                    echo "Active model: $("$_WISPY_BIN" --model-current)"
                     echo ""
-                    echo "Comenzi:"
-                    echo "  wispy model list          - listeaza modelele disponibile"
-                    echo "  wispy model set <nume>    - schimba modelul activ"
-                    echo "  wispy model current       - arata modelul activ"
+                    echo "Commands:"
+                    echo "  wispy model list          - list available models"
+                    echo "  wispy model set <name>    - switch active model"
+                    echo "  wispy model current       - show active model"
                     ;;
             esac
             ;;
         memory)
             case "$2" in
                 clear)
-                    echo -n "Stergi toata memoria? [y/N] "
+                    echo -n "Clear all memory? [y/N] "
                     read -r reply
                     if [[ "$reply" =~ ^[Yy]$ ]]; then
                         "$_WISPY_BIN" --memory-clear
                     else
-                        echo "Anulat."
+                        echo "Cancelled."
                     fi
                     ;;
                 forget)
                     if [[ -z "$3" ]]; then
-                        echo "Folosire: wispy memory forget <comanda>"
+                        echo "Usage: wispy memory forget <command>"
                         return 1
                     fi
                     "$_WISPY_BIN" --memory-forget "$3"
@@ -99,9 +99,9 @@ function wispy() {
                 *)
                     "$_WISPY_BIN" --memory-stats
                     echo ""
-                    echo "Comenzi:"
-                    echo "  wispy memory forget <cmd> - sterge o comanda din memorie"
-                    echo "  wispy memory clear        - sterge toata memoria"
+                    echo "Commands:"
+                    echo "  wispy memory forget <cmd> - remove a command from memory"
+                    echo "  wispy memory clear        - clear all memory"
                     ;;
             esac
             ;;
@@ -199,8 +199,7 @@ function _wispy_clear() {
     region_highlight=()
 }
 
-# Curata ghost text la finalul oricarei linii (Enter, Ctrl+C, click+Enter etc.)
-# Fara asta, sugestia ramane vizibila in output dupa executie
+# Clear ghost text when the line finishes (Enter, Ctrl+C, click, etc.)
 zle -N zle-line-finish _wispy_clear
 
 zle -N self-insert           _wispy_self_insert
