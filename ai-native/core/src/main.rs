@@ -793,9 +793,17 @@ fn clean_completion(completion: &str, buffer: &str) -> String {
     if c.starts_with('"') && !buffer.ends_with('"') { c = c.trim_matches('"').to_string(); }
     if c.starts_with(' ') && !buffer.ends_with(' ') { c = c.trim_start().to_string(); }
 
-    // AI a repetat toata comanda
+    // AI a repetat toata comanda (match exact)
     if c.starts_with(buffer) {
         return c[buffer.len()..].to_string();
+    }
+
+    // Buffer se termina cu spatiu (ex: "docker run "), AI returneaza fara spatiul final
+    // Ex: AI returneaza "docker run --rm" → sufixul util e "--rm"
+    //     AI returneaza "docker run"      → sufixul e "" (nu afisam nimic)
+    let buffer_trimmed = buffer.trim_end();
+    if buffer_trimmed != buffer && c.starts_with(buffer_trimmed) {
+        return c[buffer_trimmed.len()..].trim_start().to_string();
     }
 
     // AI a repetat ultimul cuvant

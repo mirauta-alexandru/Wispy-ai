@@ -192,6 +192,17 @@ function _wispy_accept() {
     fi
 }
 
+function _wispy_clear() {
+    POSTDISPLAY=""
+    _WISPY_SUGGESTION=""
+    _WISPY_CORRECTION=""
+    region_highlight=()
+}
+
+# Curata ghost text la finalul oricarei linii (Enter, Ctrl+C, click+Enter etc.)
+# Fara asta, sugestia ramane vizibila in output dupa executie
+zle -N zle-line-finish _wispy_clear
+
 zle -N self-insert           _wispy_self_insert
 zle -N backward-delete-char  _wispy_backward_delete_char
 zle -N _wispy_accept
