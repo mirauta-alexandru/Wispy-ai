@@ -2,7 +2,7 @@
 
 > Fast, offline AI-powered autocomplete for your terminal — that learns how you type.
 
-![demo](demo.gif)
+![demo](https://vhs.charm.sh/vhs-1exf3bQFikFWpmVSJKcuKd.gif)
 
 No cloud. No API key. Runs entirely on your machine.
 
