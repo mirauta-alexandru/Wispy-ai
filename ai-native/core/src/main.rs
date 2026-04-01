@@ -40,7 +40,7 @@ impl Memory {
 
     fn path() -> PathBuf {
         let home = env::var("HOME").unwrap_or_default();
-        PathBuf::from(home).join(".ai-autocomplete").join("memory.json")
+        PathBuf::from(home).join(".wispy-ai").join("memory.json")
     }
 
     fn load() -> Self {
@@ -287,14 +287,12 @@ async fn main() {
             let flag = stopped_flag_path();
             let _ = fs::write(&flag, "");
 
-            // Oprim si llama-server
-            let out = Command::new("lsof")
-                .args(["-ti", ":11435"])
-                .output()
-                .unwrap_or_else(|_| process::exit(0));
-            let pid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !pid.is_empty() {
-                Command::new("kill").arg(&pid).status().ok();
+            // Oprim llama-server — lsof poate returna mai multe PID-uri
+            if let Ok(out) = Command::new("lsof").args(["-ti", ":11435"]).output() {
+                let pids = String::from_utf8_lossy(&out.stdout);
+                for pid in pids.split_whitespace() {
+                    Command::new("kill").args(["-9", pid]).status().ok();
+                }
             }
             println!("Wispy stopped.");
         }
@@ -469,8 +467,8 @@ fn start_ai_server() {
 // ---------------------------------------------------------------------------
 
 async fn run_watchdog() {
-    const INACTIVITY_LIMIT: u64 = 15 * 60; // 15 minute
-    const CHECK_INTERVAL:   u64 = 60;       // verifica la fiecare minut
+    const INACTIVITY_LIMIT: u64 = 5 * 60; // 5 minute
+    const CHECK_INTERVAL:   u64 = 30;      // verifica la fiecare 30 secunde
 
     // Salvam PID-ul nostru
     let pid = std::process::id();
@@ -519,6 +517,23 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
 
     // Actualizam timestamp-ul de activitate
     let _ = fs::write(last_used_path(), "");
+
+    // Daca serverul a fost oprit de watchdog (inactivitate), il reporniram automat
+    let server_up = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:11435".parse().unwrap(),
+        Duration::from_millis(200),
+    ).is_ok();
+    if !server_up {
+        if let Ok(current_exe) = env::current_exe() {
+            Command::new(&current_exe)
+                .arg("--daemon")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok();
+        }
+        return; // server-ul porneste, nu avem sugestie pentru acest keystroke
+    }
 
     let memory = Memory::load();
 
@@ -585,9 +600,9 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
     let body = serde_json::json!({
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user",   "content": format!("Complete this command: {}", buffer)}
+            {"role": "user",   "content": format!("Complete: {}", buffer)}
         ],
-        "max_tokens": 15,
+        "max_tokens": 20,
         "temperature": 0.0,
         "stop": ["\n", "```"]
     });
@@ -600,7 +615,17 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
     {
         if let Ok(json) = response.json::<serde_json::Value>().await {
             if let Some(content) = json["choices"][0]["message"]["content"].as_str() {
-                print!("{}", clean_completion(content, buffer));
+                let cleaned = clean_completion(content, buffer);
+                // Modelul poate returna comanda completa sau doar sufixul
+                // Daca incepe cu buffer-ul, extragem sufixul
+                let suffix = if cleaned.starts_with(buffer) {
+                    cleaned[buffer.len()..].to_string()
+                } else {
+                    cleaned
+                };
+                if !suffix.is_empty() {
+                    print!("{}", suffix);
+                }
             }
         }
     }
