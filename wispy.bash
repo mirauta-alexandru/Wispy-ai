@@ -42,6 +42,46 @@ _wispy_complete() {
     "$_WISPY_BIN" --learn "$buf" "$ghost" "$PWD" >/dev/null 2>&1 &
 }
 
+_wispy_tab() {
+    local buf="${READLINE_LINE}"
+
+    # Daca linia e goala, Tab normal (completare fisiere/comenzi)
+    if [[ -z "$buf" ]]; then
+        _wispy_fallback
+        return
+    fi
+
+    local output
+    output=$("$_WISPY_BIN" "$buf" "$PWD" 2>/dev/null)
+
+    if [[ -n "$output" ]]; then
+        # Wispy are sugestie — o aplicam
+        _wispy_complete
+    else
+        # Nicio sugestie — fallback la completarea bash normala
+        _wispy_fallback
+    fi
+}
+
+_wispy_fallback() {
+    # Completare simpla: fisiere si comenzi
+    local buf="${READLINE_LINE}"
+    local -a completions
+    mapfile -t completions < <(compgen -f -- "$buf" 2>/dev/null)
+    [[ ${#completions[@]} -eq 0 ]] && mapfile -t completions < <(compgen -c -- "$buf" 2>/dev/null)
+
+    if [[ ${#completions[@]} -eq 1 ]]; then
+        READLINE_LINE="${completions[0]}"
+        READLINE_POINT=${#READLINE_LINE}
+    elif [[ ${#completions[@]} -gt 1 ]]; then
+        echo ""
+        printf '%s  ' "${completions[@]}"
+        echo ""
+        echo -n "${PS1@P}${READLINE_LINE}"
+    fi
+}
+
+bind -x '"\t":  _wispy_tab'
 bind -x '"\C-n": _wispy_complete'
 
 # ── Comanda wispy ─────────────────────────────────────────────────────────────
