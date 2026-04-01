@@ -53,8 +53,63 @@ function wispy() {
             cp "$src/wispy.zsh" "$HOME/.wispy-ai/wispy.zsh" && \
             echo "Updated! Run: source ~/.zshrc"
             ;;
+        model)
+            case "$2" in
+                list)
+                    "$_WISPY_BIN" --model-list
+                    ;;
+                current)
+                    echo "Model activ: $("$_WISPY_BIN" --model-current)"
+                    ;;
+                set)
+                    if [[ -z "$3" ]]; then
+                        echo "Folosire: wispy model set <nume.gguf>"
+                        return 1
+                    fi
+                    "$_WISPY_BIN" --model-set "$3"
+                    ;;
+                *)
+                    echo "Model activ: $("$_WISPY_BIN" --model-current)"
+                    echo ""
+                    echo "Comenzi:"
+                    echo "  wispy model list          - listeaza modelele disponibile"
+                    echo "  wispy model set <nume>    - schimba modelul activ"
+                    echo "  wispy model current       - arata modelul activ"
+                    ;;
+            esac
+            ;;
+        memory)
+            case "$2" in
+                clear)
+                    echo -n "Stergi toata memoria? [y/N] "
+                    read -r reply
+                    if [[ "$reply" =~ ^[Yy]$ ]]; then
+                        "$_WISPY_BIN" --memory-clear
+                    else
+                        echo "Anulat."
+                    fi
+                    ;;
+                forget)
+                    if [[ -z "$3" ]]; then
+                        echo "Folosire: wispy memory forget <comanda>"
+                        return 1
+                    fi
+                    "$_WISPY_BIN" --memory-forget "$3"
+                    ;;
+                *)
+                    "$_WISPY_BIN" --memory-stats
+                    echo ""
+                    echo "Comenzi:"
+                    echo "  wispy memory forget <cmd> - sterge o comanda din memorie"
+                    echo "  wispy memory clear        - sterge toata memoria"
+                    ;;
+            esac
+            ;;
+        import-history)
+            "$_WISPY_BIN" --import-history
+            ;;
         *)
-            echo "Usage: wispy [start|stop|status|update]"
+            echo "Usage: wispy [start|stop|status|update|model|memory|import-history]"
             ;;
     esac
 }

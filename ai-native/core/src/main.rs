@@ -220,6 +220,93 @@ fn watchdog_pid_path() -> PathBuf {
     PathBuf::from(home).join(".wispy-ai").join(".watchdog.pid")
 }
 
+fn model_config_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".wispy-ai").join("model")
+}
+
+fn active_model_name() -> String {
+    fs::read_to_string(model_config_path())
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| MODEL_NAME.to_string())
+}
+
+fn wispy_models_dir() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".wispy-ai").join("models")
+}
+
+fn legacy_models_dir() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".ai-autocomplete").join("models")
+}
+
+fn list_models() {
+    let active = active_model_name();
+    let dirs = [wispy_models_dir(), legacy_models_dir()];
+    let mut found = false;
+
+    for dir in &dirs {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".gguf") {
+                    let marker = if name == active { " <- activ" } else { "" };
+                    println!("  {}{}", name, marker);
+                    found = true;
+                }
+            }
+        }
+    }
+
+    if !found {
+        println!("Niciun model .gguf gasit.");
+        println!("Pune modelul GGUF in ~/.wispy-ai/models/ si ruleaza: wispy model set <nume.gguf>");
+    }
+}
+
+fn import_history(memory: &mut Memory) -> usize {
+    let home = env::var("HOME").unwrap_or_default();
+    let hist_path = PathBuf::from(&home).join(".zsh_history");
+
+    let content = match fs::read_to_string(&hist_path) {
+        Ok(c) => c,
+        Err(_) => { eprintln!("Nu am gasit ~/.zsh_history"); return 0; }
+    };
+
+    let mut count = 0;
+    for line in content.lines() {
+        // Suporta ambele formate:
+        // simplu:    "git status"
+        // timestamp: ": 1620000000:0;git status"
+        let cmd = if line.starts_with(": ") && line.contains(';') {
+            line.splitn(2, ';').nth(1).unwrap_or("").trim()
+        } else {
+            line.trim()
+        };
+
+        if cmd.len() < 3 || cmd.starts_with('#') {
+            continue;
+        }
+
+        let words: Vec<&str> = cmd.split_whitespace().collect();
+        if words.is_empty() { continue; }
+
+        // Invatam mai multe prefixuri din aceeasi comanda:
+        // "git status --short" → ("git", " status --short") si ("git status", " --short")
+        for i in 1..words.len() {
+            let input      = words[..i].join(" ");
+            let completion = format!(" {}", words[i..].join(" "));
+            memory.learn(&input, &completion, "");
+        }
+
+        count += 1;
+    }
+    count
+}
+
 fn watchdog_already_running() -> bool {
     let pid_path = watchdog_pid_path();
     if let Ok(pid_str) = fs::read_to_string(&pid_path) {
@@ -322,6 +409,71 @@ async fn main() {
                 );
                 memory.save();
             }
+        }
+        // ── Model management ───────────────────────────────────────────────
+        Some("--model-list") => {
+            println!("Modele disponibile:");
+            list_models();
+        }
+        Some("--model-current") => {
+            println!("{}", active_model_name());
+        }
+        Some("--model-set") => {
+            if let Some(name) = args.get(2) {
+                // Verificam ca modelul exista
+                let found = wispy_models_dir().join(name).exists()
+                    || legacy_models_dir().join(name).exists();
+                if !found {
+                    eprintln!("Modelul '{}' nu a fost gasit. Verifica: wispy model list", name);
+                    process::exit(1);
+                }
+                let _ = fs::write(model_config_path(), name);
+                println!("Model setat: {}", name);
+                println!("Reporneste wispy: wispy stop && wispy start");
+            } else {
+                eprintln!("Folosire: wispy model set <nume.gguf>");
+            }
+        }
+        // ── Memory management ──────────────────────────────────────────────
+        Some("--memory-stats") => {
+            let memory = Memory::load();
+            let total = memory.entries.len();
+            println!("Comenzi in memorie: {}", total);
+
+            if total == 0 { return; }
+
+            let mut sorted: Vec<_> = memory.entries.iter().collect();
+            sorted.sort_by(|a, b| b.1.count.cmp(&a.1.count));
+
+            println!("\nTop 10 cele mai folosite:");
+            for (i, (key, entry)) in sorted.iter().take(10).enumerate() {
+                println!("  {}. {}{} (x{})", i + 1, key, entry.completion, entry.count);
+            }
+        }
+        Some("--memory-clear") => {
+            let empty = Memory::new();
+            empty.save();
+            println!("Memoria curatata.");
+        }
+        Some("--memory-forget") => {
+            if let Some(cmd) = args.get(2) {
+                let mut memory = Memory::load();
+                if memory.entries.remove(cmd.as_str()).is_some() {
+                    memory.save();
+                    println!("Sters din memorie: {}", cmd);
+                } else {
+                    println!("Nu am gasit in memorie: {}", cmd);
+                }
+            } else {
+                eprintln!("Folosire: wispy memory forget <comanda>");
+            }
+        }
+        // ── Import history ─────────────────────────────────────────────────
+        Some("--import-history") => {
+            let mut memory = Memory::load();
+            let n = import_history(&mut memory);
+            memory.save();
+            println!("Importate {} comenzi din ~/.zsh_history.", n);
         }
         Some(input) if !input.starts_with("--") => {
             let cwd    = args.get(2).map(|s| s.as_str()).unwrap_or("");
@@ -427,16 +579,19 @@ fn start_ai_server() {
     let base_dir = PathBuf::from(&home).join(".ai-autocomplete");
     let server_path = base_dir.join("bin").join("build").join("bin").join("llama-server");
 
-    // Fallback la modelul 1.5B daca 0.5B nu e inca descarcat
-    let model_05 = base_dir.join("models").join(MODEL_NAME);
-    let model_15 = base_dir.join("models").join("qwen2.5-coder-1.5b.gguf");
-    let model_path = if model_05.exists() {
-        model_05
-    } else if model_15.exists() {
-        model_15
-    } else {
-        eprintln!("Niciun model gasit!");
-        return;
+    // Modelul activ din config, sau default
+    let active = active_model_name();
+    let candidates = [
+        wispy_models_dir().join(&active),
+        legacy_models_dir().join(&active),
+        legacy_models_dir().join(MODEL_NAME),
+    ];
+    let model_path = match candidates.iter().find(|p| p.exists()) {
+        Some(p) => p.clone(),
+        None => {
+            eprintln!("Niciun model gasit! Verifica: wispy model list");
+            return;
+        }
     };
 
     // Daca serverul e deja pornit, iesim
