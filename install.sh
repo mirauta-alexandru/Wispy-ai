@@ -48,6 +48,7 @@ step "Fetching source"
 mkdir -p "$BIN_DIR" "$INSTALL_DIR/models"
 
 if [[ -d "$SRC_DIR/.git" ]]; then
+    git -C "$SRC_DIR" remote set-url origin "$REPO" 2>/dev/null
     git -C "$SRC_DIR" pull --quiet
     echo -e "  ${GREEN}✓${NC} Updated"
 else
