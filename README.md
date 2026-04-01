@@ -1,4 +1,6 @@
 # wispy-ai
+<img width="3361" height="1191" alt="Wispy-ai" src="https://github.com/user-attachments/assets/73101dc4-175b-46da-9d54-c1b992be282e" />
+
 
 > Fast, offline AI-powered autocomplete for your terminal — that learns how you type.
 
