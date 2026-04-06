@@ -1,10 +1,16 @@
+use crossterm::{
+    cursor,
+    event::{self, Event, KeyCode},
+    execute, queue,
+    terminal::{self, ClearType},
+};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::process::{self, Command};
 use std::os::unix::fs::PermissionsExt;
@@ -22,6 +28,40 @@ const LLAMA_SERVER_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/d
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const LLAMA_SERVER_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b4900/llama-b4900-bin-ubuntu-arm64.zip";
+
+// ── Settings ───────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Settings {
+    auto_start: bool,
+    inactivity_timeout_mins: u32, // 0 = never
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { auto_start: true, inactivity_timeout_mins: 5 }
+    }
+}
+
+impl Settings {
+    fn path() -> PathBuf {
+        let home = env::var("HOME").unwrap_or_default();
+        PathBuf::from(home).join(".wispy-ai").join("settings.json")
+    }
+    fn load() -> Self {
+        fs::read_to_string(Self::path())
+            .ok()
+            .and_then(|d| serde_json::from_str(&d).ok())
+            .unwrap_or_default()
+    }
+    fn save(&self) {
+        if let Ok(data) = serde_json::to_string_pretty(self) {
+            let _ = fs::write(Self::path(), data);
+        }
+    }
+}
+
+// ── Memory ─────────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Clone)]
 struct MemoryEntry {
@@ -351,6 +391,13 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
 
     match args.get(1).map(|s| s.as_str()) {
+        Some("--settings") => {
+            run_settings_tui();
+        }
+        Some("--auto-start-check") => {
+            let s = Settings::load();
+            process::exit(if s.auto_start { 0 } else { 1 });
+        }
         Some("--daemon") => {
             let _ = fs::remove_file(stopped_flag_path());
             run_daemon().await;
@@ -607,8 +654,9 @@ fn start_ai_server() {
 }
 
 async fn run_watchdog() {
-    const INACTIVITY_LIMIT: u64 = 5 * 60;
-    const CHECK_INTERVAL:   u64 = 30;
+    let timeout_mins = Settings::load().inactivity_timeout_mins;
+    let inactivity_limit: u64 = if timeout_mins == 0 { u64::MAX } else { timeout_mins as u64 * 60 };
+    const CHECK_INTERVAL: u64 = 30;
 
     let pid = std::process::id();
     let _ = fs::write(watchdog_pid_path(), pid.to_string());
@@ -626,9 +674,9 @@ async fn run_watchdog() {
         let inactive_secs = fs::metadata(last_used_path())
             .and_then(|m| m.modified())
             .map(|t| t.elapsed().unwrap_or_default().as_secs())
-            .unwrap_or(INACTIVITY_LIMIT + 1);
+            .unwrap_or(inactivity_limit.saturating_add(1));
 
-        if inactive_secs > INACTIVITY_LIMIT {
+        if inactive_secs > inactivity_limit {
             // stop without setting the .stopped flag so it auto-restarts on next keystroke
             let out = Command::new("lsof").args(["-ti", ":11435"]).output();
             if let Ok(out) = out {
@@ -642,6 +690,174 @@ async fn run_watchdog() {
     }
 
     let _ = fs::remove_file(watchdog_pid_path());
+}
+
+fn list_model_files() -> Vec<String> {
+    let mut models = Vec::new();
+    for dir in &[wispy_models_dir(), legacy_models_dir()] {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".gguf") && !models.contains(&name) {
+                    models.push(name);
+                }
+            }
+        }
+    }
+    models.sort();
+    models
+}
+
+fn run_settings_tui() {
+    let mut settings  = Settings::load();
+    let mut model     = active_model_name();
+    let models        = list_model_files();
+    let timeout_opts: &[u32] = &[5, 10, 15, 30, 0];
+    let timeout_labels = ["5 min", "10 min", "15 min", "30 min", "Never"];
+
+    // flat cursor: 0..models.len()-1 = model rows
+    //              models.len()      = auto-start
+    //              models.len()+1    = timeout
+    //              models.len()+2    = save
+    //              models.len()+3    = quit
+    let n_models  = models.len();
+    let row_auto  = n_models;
+    let row_time  = n_models + 1;
+    let row_save  = n_models + 2;
+    let row_quit  = n_models + 3;
+    let max_row   = row_quit;
+
+    let mut cursor_row = models.iter().position(|m| m == &model).unwrap_or(0);
+
+    terminal::enable_raw_mode().unwrap();
+    execute!(stdout(), terminal::EnterAlternateScreen, cursor::Hide).unwrap();
+
+    'outer: loop {
+        // ── Render ─────────────────────────────────────────────────────
+        queue!(stdout(),
+            terminal::Clear(ClearType::All),
+            cursor::MoveTo(0, 0)
+        ).unwrap();
+
+        let dim   = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+        let bold  = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+        let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
+        let rev   = |s: &str| format!("\x1b[7m {} \x1b[0m", s);
+
+        let mut out = String::new();
+        out.push_str(&format!("\r\n  {}\r\n", bold("Wispy Settings")));
+        out.push_str(&format!("  {}\r\n\r\n", dim("─────────────────────────────────────")));
+
+        // Model section
+        out.push_str(&format!("  {}\r\n", bold("MODEL")));
+        for (i, m) in models.iter().enumerate() {
+            let selected = m == &model;
+            let bullet   = if selected { green("●") } else { dim("○") };
+            let label    = if selected { format!("{}  {}", m, dim("← active")) } else { m.clone() };
+            let line     = if cursor_row == i {
+                format!("  {} {}\r\n", bullet, rev(&label))
+            } else {
+                format!("  {} {}\r\n", bullet, label)
+            };
+            out.push_str(&line);
+        }
+        out.push_str("\r\n");
+
+        // Auto-start section
+        out.push_str(&format!("  {}\r\n", bold("AUTO-START")));
+        let opts_auto = [("On shell load", true), ("Manual  (wispy start · wispy stop)", false)];
+        for (i, (label, val)) in opts_auto.iter().enumerate() {
+            let selected = settings.auto_start == *val;
+            let bullet   = if selected { green("●") } else { dim("○") };
+            let global_i = row_auto + i;
+            let line = if cursor_row == global_i {
+                format!("  {} {}\r\n", bullet, rev(label))
+            } else {
+                format!("  {} {}\r\n", bullet, label)
+            };
+            out.push_str(&line);
+        }
+        out.push_str("\r\n");
+
+        // Timeout section
+        out.push_str(&format!("  {}\r\n  ", bold("INACTIVITY TIMEOUT")));
+        for (i, (&secs, label)) in timeout_opts.iter().zip(timeout_labels.iter()).enumerate() {
+            let selected = settings.inactivity_timeout_mins == secs;
+            let bullet   = if selected { green("●") } else { dim("○") };
+            let global_i = row_time + i;
+            let s = if cursor_row == global_i {
+                format!("{} {}  ", bullet, rev(label))
+            } else {
+                format!("{} {}  ", bullet, label)
+            };
+            out.push_str(&s);
+        }
+        out.push_str("\r\n\r\n");
+
+        // Save / Quit
+        out.push_str(&format!("  {}\r\n", dim("─────────────────────────────────────")));
+        let save_str = if cursor_row == row_save { rev("Save & exit") } else { format!("Save & exit") };
+        let quit_str = if cursor_row == row_quit { rev("Quit") } else { "Quit".to_string() };
+        out.push_str(&format!("  {}    {}\r\n\r\n", green(&save_str), dim(&quit_str)));
+        out.push_str(&format!("  {}\r\n",
+            dim("↑↓ navigate · Enter to select · Left/Right for timeout")));
+
+        print!("{}", out);
+        stdout().flush().unwrap();
+
+        // ── Input ──────────────────────────────────────────────────────
+        if let Ok(Event::Key(key)) = event::read() {
+            match key.code {
+                KeyCode::Up => {
+                    if cursor_row > 0 { cursor_row -= 1; }
+                }
+                KeyCode::Down => {
+                    if cursor_row < max_row { cursor_row += 1; }
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    if cursor_row < n_models {
+                        model = models[cursor_row].clone();
+                    } else if cursor_row == row_auto {
+                        settings.auto_start = true;
+                    } else if cursor_row == row_auto + 1 {
+                        settings.auto_start = false;
+                    } else if cursor_row >= row_time && cursor_row < row_save {
+                        let idx = cursor_row - row_time;
+                        settings.inactivity_timeout_mins = timeout_opts[idx];
+                    } else if cursor_row == row_save {
+                        settings.save();
+                        let _ = fs::write(model_config_path(), &model);
+                        break 'outer;
+                    } else if cursor_row == row_quit {
+                        break 'outer;
+                    }
+                }
+                KeyCode::Left => {
+                    if cursor_row >= row_time && cursor_row < row_save {
+                        if cursor_row > row_time { cursor_row -= 1; }
+                    }
+                }
+                KeyCode::Right => {
+                    if cursor_row >= row_time && cursor_row < row_save {
+                        let last_time_row = row_time + timeout_opts.len() - 1;
+                        if cursor_row < last_time_row { cursor_row += 1; }
+                    }
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    settings.save();
+                    let _ = fs::write(model_config_path(), &model);
+                    break 'outer;
+                }
+                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                    break 'outer;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    execute!(stdout(), terminal::LeaveAlternateScreen, cursor::Show).unwrap();
+    terminal::disable_raw_mode().unwrap();
 }
 
 fn is_thinking_model(name: &str) -> bool {

@@ -17,8 +17,10 @@ _WISPY_SUGGESTION=""
 _WISPY_CORRECTION=""
 _WISPY_RECENT_CMDS=()
 
-# Start daemon in background on shell load
-"$_WISPY_BIN" --daemon >/dev/null 2>&1 &!
+# Start daemon in background on shell load (only if auto-start is enabled in settings)
+if "$_WISPY_BIN" --auto-start-check 2>/dev/null; then
+    "$_WISPY_BIN" --daemon >/dev/null 2>&1 &!
+fi
 
 # ── Control function ────────────────────────────────────────────────────────
 
@@ -105,11 +107,14 @@ function wispy() {
                     ;;
             esac
             ;;
+        settings)
+            "$_WISPY_BIN" --settings
+            ;;
         import-history)
             "$_WISPY_BIN" --import-history
             ;;
         *)
-            echo "Usage: wispy [start|stop|status|update|model|memory|import-history]"
+            echo "Usage: wispy [start|stop|status|settings|update|model|memory|import-history]"
             ;;
     esac
 }
