@@ -423,6 +423,24 @@ async fn main() {
                 eprintln!("Removed {} typo entries from memory.", removed);
             }
         }
+        Some("--learn-cmd") => {
+            // Learn all prefixes from a full executed command
+            // e.g. "git status --short" → ("git","status --short") + ("git status","--short")
+            if args.len() >= 3 {
+                let cmd = &args[2];
+                let cwd = args.get(3).map(|s| s.as_str()).unwrap_or("");
+                let words: Vec<&str> = cmd.split_whitespace().collect();
+                if words.len() >= 2 {
+                    let mut memory = Memory::load();
+                    for i in 1..words.len() {
+                        let input      = words[..i].join(" ");
+                        let completion = format!(" {}", words[i..].join(" "));
+                        memory.learn(&input, &completion, cwd);
+                    }
+                    memory.save();
+                }
+            }
+        }
         Some("--learn") => {
             if args.len() >= 4 {
                 let mut memory = Memory::load();

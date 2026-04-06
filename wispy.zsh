@@ -122,9 +122,20 @@ function wispy() {
     esac
 }
 
-# ── Track recent commands ───────────────────────────────────────────────────
+# ── Learn from every executed command (Enter) ──────────────────────────────
 
 autoload -Uz add-zsh-hook
+
+function _wispy_preexec() {
+    local cmd="$1"
+    [[ ${#cmd} -lt 3 ]] && return
+    [[ "$cmd" == wispy* || "$cmd" == " "* ]] && return
+    "$_WISPY_BIN" --learn-cmd "$cmd" "$PWD" >/dev/null 2>&1 &!
+}
+add-zsh-hook preexec _wispy_preexec
+
+# ── Track recent commands ───────────────────────────────────────────────────
+
 function _wispy_track_recent() {
     local last_cmd
     last_cmd=$(fc -ln -1 2>/dev/null | sed 's/^[[:space:]]*//')
