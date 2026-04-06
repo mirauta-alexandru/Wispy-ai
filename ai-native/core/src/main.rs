@@ -644,6 +644,19 @@ async fn run_watchdog() {
     let _ = fs::remove_file(watchdog_pid_path());
 }
 
+fn is_thinking_model(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("qwen3") || n.contains("qwen35") || n.contains("qwq")
+}
+
+fn build_raw_prompt(system: &str, user: &str, no_think: bool) -> String {
+    let think_prefix = if no_think { "<think>\n\n</think>\n\n" } else { "" };
+    format!(
+        "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n{}",
+        system, user, think_prefix
+    )
+}
+
 async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
     if stopped_flag_path().exists() {
         return;
@@ -693,19 +706,22 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
     let related    = memory.get_related(buffer, cwd, 5);
 
     let mut system = String::from(
-        "You are a terminal autocomplete AI. \
-         The user may have made minor typos — silently correct and complete. \
-         Output ONLY the raw command text that completes the user's input. \
-         Do not explain. Do not use quotes or markdown. Output at most one line."
+        "You are a zsh shell autocomplete. \
+         Given a partial command, output the single most likely completed command on one line. \
+         Rules:\n\
+         - Output the FULL completed command, not just the suffix\n\
+         - If the input is already a complete command, repeat it as-is\n\
+         - Use short, realistic arguments (flags, filenames, hostnames)\n\
+         - No explanation, no markdown, no extra lines"
     );
 
     if !related.is_empty() || exact_hint.is_some() {
-        system.push_str("\n\nUser's command patterns (use as hints):");
+        system.push_str("\n\nThis user's command history (use as hints):");
         for (input, e) in &related {
-            system.push_str(&format!("\n  {} -> {}", input, e.completion));
+            system.push_str(&format!("\n  {}{}", input, e.completion));
         }
         if let Some(e) = exact_hint {
-            system.push_str(&format!("\n  {} -> {}", buffer, e.completion));
+            system.push_str(&format!("\n  {}{}", buffer, e.completion));
         }
     }
 
@@ -717,34 +733,62 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
         .build()
         .unwrap();
 
-    let body = serde_json::json!({
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user",   "content": format!("Complete: {}", buffer)}
-        ],
-        "max_tokens": 20,
-        "temperature": 0.0,
-        "stop": ["\n", "```"]
-    });
+    let active_model = active_model_name();
+    let thinking = is_thinking_model(&active_model);
 
-    if let Ok(response) = client
-        .post("http://127.0.0.1:11435/v1/chat/completions")
-        .json(&body)
-        .send()
-        .await
-    {
-        if let Ok(json) = response.json::<serde_json::Value>().await {
-            if let Some(content) = json["choices"][0]["message"]["content"].as_str() {
-                let cleaned = clean_completion(content, buffer);
-                let suffix = if cleaned.starts_with(buffer) {
-                    cleaned[buffer.len()..].to_string()
-                } else {
-                    cleaned
-                };
-                if !suffix.is_empty() {
-                    print!("{}", suffix);
-                }
-            }
+    let content = if thinking {
+        let prompt = build_raw_prompt(&system, buffer, true);
+        let body = serde_json::json!({
+            "prompt": prompt,
+            "n_predict": 30,
+            "temperature": 0.0,
+            "stop": ["\n", "<|im_end|>"]
+        });
+        if let Ok(response) = client
+            .post("http://127.0.0.1:11435/completion")
+            .json(&body)
+            .send()
+            .await
+        {
+            response.json::<serde_json::Value>().await
+                .ok()
+                .and_then(|j| j["content"].as_str().map(|s| s.to_string()))
+        } else {
+            None
+        }
+    } else {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": buffer}
+            ],
+            "max_tokens": 20,
+            "temperature": 0.0,
+            "stop": ["\n", "```"]
+        });
+        if let Ok(response) = client
+            .post("http://127.0.0.1:11435/v1/chat/completions")
+            .json(&body)
+            .send()
+            .await
+        {
+            response.json::<serde_json::Value>().await
+                .ok()
+                .and_then(|j| j["choices"][0]["message"]["content"].as_str().map(|s| s.to_string()))
+        } else {
+            None
+        }
+    };
+
+    if let Some(content) = content {
+        let cleaned = clean_completion(&content, buffer);
+        let suffix = if cleaned.starts_with(buffer) {
+            cleaned[buffer.len()..].to_string()
+        } else {
+            cleaned
+        };
+        if !suffix.is_empty() {
+            print!("{}", suffix);
         }
     }
 }

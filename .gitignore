@@ -8,3 +8,11 @@ ai-native/core/Cargo.lock
 # Models and downloaded binaries (too large for git)
 *.gguf
 *.zip
+
+# Finetune: virtualenv, model weights, merged models, raw data
+finetune/venv/
+finetune/tldr/
+finetune/wispy-*-finetuned/
+finetune/wispy-*-merged/
+finetune/wispy-finetuned/
+finetune/wispy-merged/
