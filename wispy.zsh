@@ -17,10 +17,13 @@ _WISPY_SUGGESTION=""
 _WISPY_CORRECTION=""
 _WISPY_RECENT_CMDS=()
 
-# Start daemon in background on shell load (only if auto-start is enabled in settings)
-if "$_WISPY_BIN" --auto-start-check 2>/dev/null; then
+# Start daemon in background on shell load
+# Check settings file directly (no binary call needed at startup)
+_wispy_settings="$HOME/.wispy-ai/settings.json"
+if [[ ! -f "$_wispy_settings" ]] || ! grep -q '"auto_start": false' "$_wispy_settings" 2>/dev/null; then
     "$_WISPY_BIN" --daemon >/dev/null 2>&1 &!
 fi
+unset _wispy_settings
 
 # ── Control function ────────────────────────────────────────────────────────
 

@@ -388,10 +388,6 @@ async fn main() {
         Some("--settings") => {
             run_settings_tui();
         }
-        Some("--auto-start-check") => {
-            let s = Settings::load();
-            process::exit(if s.auto_start { 0 } else { 1 });
-        }
         Some("--daemon") => {
             let _ = fs::remove_file(stopped_flag_path());
             run_daemon().await;
