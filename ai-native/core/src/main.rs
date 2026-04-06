@@ -1,7 +1,3 @@
-use crossterm::{
-    event::{self, Event, KeyCode},
-    terminal,
-};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -706,171 +702,94 @@ fn list_model_files() -> Vec<String> {
     models
 }
 
-fn render_settings(
-    settings: &Settings,
-    models: &[String],
-    model: &str,
-    cursor_row: usize,
-    timeout_opts: &[u32],
-    timeout_labels: &[&str],
-) -> String {
-    let n_models = models.len();
-    let row_auto = n_models;
-    let row_time = n_models + 1;
-    let row_save = n_models + 2;
-    let row_quit = n_models + 3;
-
-    let dim   = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
-    let bold  = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
-    let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
-    let rev   = |s: &str| format!("\x1b[7m {} \x1b[0m", s);
-    let hi    = |s: &str, active: bool| -> String {
-        if active { rev(s) } else { s.to_string() }
-    };
-
-    let mut out = String::new();
-    out.push_str(&format!("\r\n  {}\r\n", bold("Wispy Settings")));
-    out.push_str(&format!("  {}\r\n\r\n", dim("─────────────────────────────────────")));
-
-    // Model
-    out.push_str(&format!("  {}\r\n", bold("MODEL")));
-    if models.is_empty() {
-        out.push_str(&format!("  {}\r\n", dim("No models found in ~/.wispy-ai/models/")));
-    }
-    for (i, m) in models.iter().enumerate() {
-        let active  = m == model;
-        let bullet  = if active { green("●") } else { dim("○") };
-        let label   = if active { format!("{}  {}", m, dim("← active")) } else { m.clone() };
-        out.push_str(&format!("  {} {}\r\n", bullet, hi(&label, cursor_row == i)));
-    }
-    out.push_str("\r\n");
-
-    // Auto-start
-    out.push_str(&format!("  {}\r\n", bold("AUTO-START")));
-    let opts_auto = [("On shell load", true), ("Manual  (wispy start / wispy stop)", false)];
-    for (i, (label, val)) in opts_auto.iter().enumerate() {
-        let sel    = settings.auto_start == *val;
-        let bullet = if sel { green("●") } else { dim("○") };
-        out.push_str(&format!("  {} {}\r\n", bullet, hi(label, cursor_row == row_auto + i)));
-    }
-    out.push_str("\r\n");
-
-    // Timeout
-    out.push_str(&format!("  {}\r\n  ", bold("INACTIVITY TIMEOUT")));
-    for (i, (&val, label)) in timeout_opts.iter().zip(timeout_labels.iter()).enumerate() {
-        let sel    = settings.inactivity_timeout_mins == val;
-        let bullet = if sel { green("●") } else { dim("○") };
-        out.push_str(&format!("{} {}  ", bullet, hi(label, cursor_row == row_time + i)));
-    }
-    out.push_str("\r\n\r\n");
-
-    // Actions
-    out.push_str(&format!("  {}\r\n", dim("─────────────────────────────────────")));
-    out.push_str(&format!("  {}    {}\r\n\r\n",
-        green(&hi("Save & exit", cursor_row == row_save)),
-        dim(&hi("Quit", cursor_row == row_quit)),
-    ));
-    out.push_str(&format!("  {}\r\n",
-        dim("↑↓ navigate · Enter/Space select · S save · Q quit")));
-
-    out
-}
-
 fn run_settings_tui() {
-    let mut settings   = Settings::load();
-    let mut model      = active_model_name();
-    let models         = list_model_files();
-    let timeout_opts   = [5u32, 10, 15, 30, 0];
-    let timeout_labels = ["5 min", "10 min", "15 min", "30 min", "Never"];
+    let bold  = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+    let dim   = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+    let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
 
-    let n_models  = models.len();
-    let row_auto  = n_models;
-    let row_time  = n_models + 1;
-    let row_save  = n_models + 2;
-    let row_quit  = n_models + 3;
-    let max_row   = row_quit;
+    let mut settings     = Settings::load();
+    let mut model        = active_model_name();
+    let models           = list_model_files();
+    let timeout_opts     = [5u32, 10, 15, 30, 0];
+    let timeout_labels   = ["5 min", "10 min", "15 min", "30 min", "Never"];
 
-    let mut cursor_row  = models.iter().position(|m| m == &model).unwrap_or(0);
-    let mut lines_drawn = 0usize;
+    loop {
+        // ── Render ────────────────────────────────────────────────────
+        println!("\n  {}", bold("Wispy Settings"));
+        println!("  {}", dim("─────────────────────────────────────"));
 
-    if terminal::enable_raw_mode().is_err() {
-        eprintln!("wispy: terminal does not support interactive mode");
-        return;
-    }
-    // Hide cursor for cleaner look
-    print!("\x1b[?25l");
-    let _ = stdout().flush();
-
-    'outer: loop {
-        // Move cursor up to overwrite previous render
-        if lines_drawn > 0 {
-            print!("\x1b[{}A\x1b[J", lines_drawn);
+        // Model
+        println!("\n  {}  {}", bold("1. Model:"), model);
+        if models.is_empty() {
+            println!("     {}", dim("No models found in ~/.wispy-ai/models/"));
+        } else {
+            for (i, m) in models.iter().enumerate() {
+                let marker = if m == &model { green("  ← active") } else { String::new() };
+                println!("     {}. {}{}", i + 1, m, marker);
+            }
         }
 
-        let out = render_settings(
-            &settings, &models, &model, cursor_row,
-            &timeout_opts, &timeout_labels,
-        );
-        lines_drawn = out.chars().filter(|&c| c == '\n').count();
-        print!("{}", out);
+        // Auto-start
+        let auto_str = if settings.auto_start {
+            green("On shell load")
+        } else {
+            "Manual  (wispy start / wispy stop)".to_string()
+        };
+        println!("\n  {}  {}", bold("2. Auto-start:"), auto_str);
+
+        // Timeout
+        let timeout_str = timeout_opts.iter().zip(timeout_labels.iter())
+            .find(|(&v, _)| v == settings.inactivity_timeout_mins)
+            .map(|(_, l)| *l)
+            .unwrap_or("5 min");
+        println!("\n  {}  {}", bold("3. Timeout:"), timeout_str);
+        println!("     {}", dim("Options: 5 min / 10 min / 15 min / 30 min / Never"));
+
+        println!("\n  {}", dim("─────────────────────────────────────"));
+        println!("  {}", dim("Enter 1/2/3 to change · S to save · Q to quit"));
+        print!("\n  > ");
         let _ = stdout().flush();
 
-        match event::read() {
-            Ok(Event::Key(key)) => match key.code {
-                KeyCode::Up => {
-                    if cursor_row > 0 { cursor_row -= 1; }
+        // ── Input ─────────────────────────────────────────────────────
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_err() { break; }
+        let input = input.trim().to_lowercase();
+
+        match input.as_str() {
+            "1" => {
+                if models.is_empty() {
+                    println!("  No models available.");
+                    continue;
                 }
-                KeyCode::Down => {
-                    if cursor_row < max_row { cursor_row += 1; }
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    if cursor_row < n_models {
-                        model = models[cursor_row].clone();
-                    } else if cursor_row == row_auto {
-                        settings.auto_start = true;
-                    } else if cursor_row == row_auto + 1 {
-                        settings.auto_start = false;
-                    } else if cursor_row >= row_time && cursor_row < row_save {
-                        settings.inactivity_timeout_mins = timeout_opts[cursor_row - row_time];
-                    } else if cursor_row == row_save {
-                        settings.save();
-                        let _ = fs::write(model_config_path(), &model);
-                        break 'outer;
-                    } else if cursor_row == row_quit {
-                        break 'outer;
+                print!("  Select model number (1-{}): ", models.len());
+                let _ = stdout().flush();
+                let mut sel = String::new();
+                if std::io::stdin().read_line(&mut sel).is_ok() {
+                    if let Ok(n) = sel.trim().parse::<usize>() {
+                        if n >= 1 && n <= models.len() {
+                            model = models[n - 1].clone();
+                        }
                     }
                 }
-                KeyCode::Left => {
-                    if cursor_row > row_time && cursor_row < row_save {
-                        cursor_row -= 1;
-                    }
-                }
-                KeyCode::Right => {
-                    if cursor_row >= row_time && cursor_row < row_save - 1 {
-                        cursor_row += 1;
-                    }
-                }
-                KeyCode::Char('s') | KeyCode::Char('S') => {
-                    settings.save();
-                    let _ = fs::write(model_config_path(), &model);
-                    break 'outer;
-                }
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                    break 'outer;
-                }
-                _ => {}
-            },
+            }
+            "2" => {
+                settings.auto_start = !settings.auto_start;
+            }
+            "3" => {
+                let cur = timeout_opts.iter().position(|&v| v == settings.inactivity_timeout_mins).unwrap_or(0);
+                settings.inactivity_timeout_mins = timeout_opts[(cur + 1) % timeout_opts.len()];
+            }
+            "s" => {
+                settings.save();
+                let _ = fs::write(model_config_path(), &model);
+                println!("\n  {}  Restart: wispy stop && wispy start\n",
+                    green("Saved!"));
+                break;
+            }
+            "q" | "" => { println!(); break; }
             _ => {}
         }
     }
-
-    // Clear menu, restore cursor
-    if lines_drawn > 0 {
-        print!("\x1b[{}A\x1b[J", lines_drawn);
-    }
-    print!("\x1b[?25h");
-    let _ = stdout().flush();
-    let _ = terminal::disable_raw_mode();
 }
 
 fn is_thinking_model(name: &str) -> bool {
