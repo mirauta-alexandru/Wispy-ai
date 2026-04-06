@@ -935,13 +935,11 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
     let related    = memory.get_related(buffer, cwd, 5);
 
     let mut system = String::from(
-        "You are a zsh shell autocomplete. \
-         Given a partial command, output the single most likely completed command on one line. \
-         Rules:\n\
-         - Output the FULL completed command, not just the suffix\n\
-         - If the input is already a complete command, repeat it as-is\n\
-         - Use short, realistic arguments (flags, filenames, hostnames)\n\
-         - No explanation, no markdown, no extra lines"
+        "You are a zsh terminal autocomplete. \
+         Given a partial command, output exactly ONE completed command on a single line. \
+         Do NOT list alternatives. Do NOT use commas between options. \
+         Output only the single most likely completion. \
+         No explanation, no markdown, no extra text."
     );
 
     if !related.is_empty() || exact_hint.is_some() {
@@ -969,9 +967,9 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
         let prompt = build_raw_prompt(&system, buffer, true);
         let body = serde_json::json!({
             "prompt": prompt,
-            "n_predict": 30,
+            "n_predict": 40,
             "temperature": 0.0,
-            "stop": ["\n", "<|im_end|>"]
+            "stop": ["\n", "<|im_end|>", ", "]
         });
         if let Ok(response) = client
             .post("http://127.0.0.1:11435/completion")
@@ -991,9 +989,9 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
                 {"role": "system", "content": system},
                 {"role": "user",   "content": buffer}
             ],
-            "max_tokens": 20,
+            "max_tokens": 40,
             "temperature": 0.0,
-            "stop": ["\n", "```"]
+            "stop": ["\n", "```", ", "]
         });
         if let Ok(response) = client
             .post("http://127.0.0.1:11435/v1/chat/completions")
@@ -1023,7 +1021,13 @@ async fn ask_ai(buffer: &str, cwd: &str, recent: &str) {
 }
 
 fn clean_completion(completion: &str, buffer: &str) -> String {
-    let mut c = completion.trim().to_string();
+    // Ia doar prima linie si primul "token" logic (inainte de virgula-spatiu)
+    let first_line = completion.lines().next().unwrap_or("").trim();
+    let mut c = if let Some(idx) = first_line.find(", ") {
+        first_line[..idx].to_string()
+    } else {
+        first_line.to_string()
+    };
 
     if c.starts_with('`') { c = c.trim_matches('`').to_string(); }
     if c.starts_with('"') && !buffer.ends_with('"') { c = c.trim_matches('"').to_string(); }
