@@ -1,8 +1,6 @@
 use crossterm::{
-    cursor,
     event::{self, Event, KeyCode},
-    execute, queue,
-    terminal::{self, ClearType},
+    terminal,
 };
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -708,18 +706,83 @@ fn list_model_files() -> Vec<String> {
     models
 }
 
+fn render_settings(
+    settings: &Settings,
+    models: &[String],
+    model: &str,
+    cursor_row: usize,
+    timeout_opts: &[u32],
+    timeout_labels: &[&str],
+) -> String {
+    let n_models = models.len();
+    let row_auto = n_models;
+    let row_time = n_models + 1;
+    let row_save = n_models + 2;
+    let row_quit = n_models + 3;
+
+    let dim   = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+    let bold  = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+    let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
+    let rev   = |s: &str| format!("\x1b[7m {} \x1b[0m", s);
+    let hi    = |s: &str, active: bool| -> String {
+        if active { rev(s) } else { s.to_string() }
+    };
+
+    let mut out = String::new();
+    out.push_str(&format!("\r\n  {}\r\n", bold("Wispy Settings")));
+    out.push_str(&format!("  {}\r\n\r\n", dim("─────────────────────────────────────")));
+
+    // Model
+    out.push_str(&format!("  {}\r\n", bold("MODEL")));
+    if models.is_empty() {
+        out.push_str(&format!("  {}\r\n", dim("No models found in ~/.wispy-ai/models/")));
+    }
+    for (i, m) in models.iter().enumerate() {
+        let active  = m == model;
+        let bullet  = if active { green("●") } else { dim("○") };
+        let label   = if active { format!("{}  {}", m, dim("← active")) } else { m.clone() };
+        out.push_str(&format!("  {} {}\r\n", bullet, hi(&label, cursor_row == i)));
+    }
+    out.push_str("\r\n");
+
+    // Auto-start
+    out.push_str(&format!("  {}\r\n", bold("AUTO-START")));
+    let opts_auto = [("On shell load", true), ("Manual  (wispy start / wispy stop)", false)];
+    for (i, (label, val)) in opts_auto.iter().enumerate() {
+        let sel    = settings.auto_start == *val;
+        let bullet = if sel { green("●") } else { dim("○") };
+        out.push_str(&format!("  {} {}\r\n", bullet, hi(label, cursor_row == row_auto + i)));
+    }
+    out.push_str("\r\n");
+
+    // Timeout
+    out.push_str(&format!("  {}\r\n  ", bold("INACTIVITY TIMEOUT")));
+    for (i, (&val, label)) in timeout_opts.iter().zip(timeout_labels.iter()).enumerate() {
+        let sel    = settings.inactivity_timeout_mins == val;
+        let bullet = if sel { green("●") } else { dim("○") };
+        out.push_str(&format!("{} {}  ", bullet, hi(label, cursor_row == row_time + i)));
+    }
+    out.push_str("\r\n\r\n");
+
+    // Actions
+    out.push_str(&format!("  {}\r\n", dim("─────────────────────────────────────")));
+    out.push_str(&format!("  {}    {}\r\n\r\n",
+        green(&hi("Save & exit", cursor_row == row_save)),
+        dim(&hi("Quit", cursor_row == row_quit)),
+    ));
+    out.push_str(&format!("  {}\r\n",
+        dim("↑↓ navigate · Enter/Space select · S save · Q quit")));
+
+    out
+}
+
 fn run_settings_tui() {
-    let mut settings  = Settings::load();
-    let mut model     = active_model_name();
-    let models        = list_model_files();
-    let timeout_opts: &[u32] = &[5, 10, 15, 30, 0];
+    let mut settings   = Settings::load();
+    let mut model      = active_model_name();
+    let models         = list_model_files();
+    let timeout_opts   = [5u32, 10, 15, 30, 0];
     let timeout_labels = ["5 min", "10 min", "15 min", "30 min", "Never"];
 
-    // flat cursor: 0..models.len()-1 = model rows
-    //              models.len()      = auto-start
-    //              models.len()+1    = timeout
-    //              models.len()+2    = save
-    //              models.len()+3    = quit
     let n_models  = models.len();
     let row_auto  = n_models;
     let row_time  = n_models + 1;
@@ -727,87 +790,33 @@ fn run_settings_tui() {
     let row_quit  = n_models + 3;
     let max_row   = row_quit;
 
-    let mut cursor_row = models.iter().position(|m| m == &model).unwrap_or(0);
+    let mut cursor_row  = models.iter().position(|m| m == &model).unwrap_or(0);
+    let mut lines_drawn = 0usize;
 
-    terminal::enable_raw_mode().unwrap();
-    execute!(stdout(), terminal::EnterAlternateScreen, cursor::Hide).unwrap();
+    if terminal::enable_raw_mode().is_err() {
+        eprintln!("wispy: terminal does not support interactive mode");
+        return;
+    }
+    // Hide cursor for cleaner look
+    print!("\x1b[?25l");
+    let _ = stdout().flush();
 
     'outer: loop {
-        // ── Render ─────────────────────────────────────────────────────
-        queue!(stdout(),
-            terminal::Clear(ClearType::All),
-            cursor::MoveTo(0, 0)
-        ).unwrap();
-
-        let dim   = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
-        let bold  = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
-        let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
-        let rev   = |s: &str| format!("\x1b[7m {} \x1b[0m", s);
-
-        let mut out = String::new();
-        out.push_str(&format!("\r\n  {}\r\n", bold("Wispy Settings")));
-        out.push_str(&format!("  {}\r\n\r\n", dim("─────────────────────────────────────")));
-
-        // Model section
-        out.push_str(&format!("  {}\r\n", bold("MODEL")));
-        for (i, m) in models.iter().enumerate() {
-            let selected = m == &model;
-            let bullet   = if selected { green("●") } else { dim("○") };
-            let label    = if selected { format!("{}  {}", m, dim("← active")) } else { m.clone() };
-            let line     = if cursor_row == i {
-                format!("  {} {}\r\n", bullet, rev(&label))
-            } else {
-                format!("  {} {}\r\n", bullet, label)
-            };
-            out.push_str(&line);
+        // Move cursor up to overwrite previous render
+        if lines_drawn > 0 {
+            print!("\x1b[{}A\x1b[J", lines_drawn);
         }
-        out.push_str("\r\n");
 
-        // Auto-start section
-        out.push_str(&format!("  {}\r\n", bold("AUTO-START")));
-        let opts_auto = [("On shell load", true), ("Manual  (wispy start · wispy stop)", false)];
-        for (i, (label, val)) in opts_auto.iter().enumerate() {
-            let selected = settings.auto_start == *val;
-            let bullet   = if selected { green("●") } else { dim("○") };
-            let global_i = row_auto + i;
-            let line = if cursor_row == global_i {
-                format!("  {} {}\r\n", bullet, rev(label))
-            } else {
-                format!("  {} {}\r\n", bullet, label)
-            };
-            out.push_str(&line);
-        }
-        out.push_str("\r\n");
-
-        // Timeout section
-        out.push_str(&format!("  {}\r\n  ", bold("INACTIVITY TIMEOUT")));
-        for (i, (&secs, label)) in timeout_opts.iter().zip(timeout_labels.iter()).enumerate() {
-            let selected = settings.inactivity_timeout_mins == secs;
-            let bullet   = if selected { green("●") } else { dim("○") };
-            let global_i = row_time + i;
-            let s = if cursor_row == global_i {
-                format!("{} {}  ", bullet, rev(label))
-            } else {
-                format!("{} {}  ", bullet, label)
-            };
-            out.push_str(&s);
-        }
-        out.push_str("\r\n\r\n");
-
-        // Save / Quit
-        out.push_str(&format!("  {}\r\n", dim("─────────────────────────────────────")));
-        let save_str = if cursor_row == row_save { rev("Save & exit") } else { format!("Save & exit") };
-        let quit_str = if cursor_row == row_quit { rev("Quit") } else { "Quit".to_string() };
-        out.push_str(&format!("  {}    {}\r\n\r\n", green(&save_str), dim(&quit_str)));
-        out.push_str(&format!("  {}\r\n",
-            dim("↑↓ navigate · Enter to select · Left/Right for timeout")));
-
+        let out = render_settings(
+            &settings, &models, &model, cursor_row,
+            &timeout_opts, &timeout_labels,
+        );
+        lines_drawn = out.chars().filter(|&c| c == '\n').count();
         print!("{}", out);
-        stdout().flush().unwrap();
+        let _ = stdout().flush();
 
-        // ── Input ──────────────────────────────────────────────────────
-        if let Ok(Event::Key(key)) = event::read() {
-            match key.code {
+        match event::read() {
+            Ok(Event::Key(key)) => match key.code {
                 KeyCode::Up => {
                     if cursor_row > 0 { cursor_row -= 1; }
                 }
@@ -822,8 +831,7 @@ fn run_settings_tui() {
                     } else if cursor_row == row_auto + 1 {
                         settings.auto_start = false;
                     } else if cursor_row >= row_time && cursor_row < row_save {
-                        let idx = cursor_row - row_time;
-                        settings.inactivity_timeout_mins = timeout_opts[idx];
+                        settings.inactivity_timeout_mins = timeout_opts[cursor_row - row_time];
                     } else if cursor_row == row_save {
                         settings.save();
                         let _ = fs::write(model_config_path(), &model);
@@ -833,14 +841,13 @@ fn run_settings_tui() {
                     }
                 }
                 KeyCode::Left => {
-                    if cursor_row >= row_time && cursor_row < row_save {
-                        if cursor_row > row_time { cursor_row -= 1; }
+                    if cursor_row > row_time && cursor_row < row_save {
+                        cursor_row -= 1;
                     }
                 }
                 KeyCode::Right => {
-                    if cursor_row >= row_time && cursor_row < row_save {
-                        let last_time_row = row_time + timeout_opts.len() - 1;
-                        if cursor_row < last_time_row { cursor_row += 1; }
+                    if cursor_row >= row_time && cursor_row < row_save - 1 {
+                        cursor_row += 1;
                     }
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') => {
@@ -852,12 +859,18 @@ fn run_settings_tui() {
                     break 'outer;
                 }
                 _ => {}
-            }
+            },
+            _ => {}
         }
     }
 
-    execute!(stdout(), terminal::LeaveAlternateScreen, cursor::Show).unwrap();
-    terminal::disable_raw_mode().unwrap();
+    // Clear menu, restore cursor
+    if lines_drawn > 0 {
+        print!("\x1b[{}A\x1b[J", lines_drawn);
+    }
+    print!("\x1b[?25h");
+    let _ = stdout().flush();
+    let _ = terminal::disable_raw_mode();
 }
 
 fn is_thinking_model(name: &str) -> bool {
